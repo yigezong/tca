@@ -41,6 +41,16 @@ class ClaimStore:
                     detail TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS coordination_tasks (
+                    claim_id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    claim_revision INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS coordination_tasks_pending
+                    ON coordination_tasks(status, created_at);
                 """
             )
 
@@ -171,6 +181,60 @@ class ClaimStore:
             )
             self._audit(claim_id, event, detail or {})
         return self.get(claim_id)
+
+    def queue_coordination(self, claim_id: str) -> None:
+        record = self.get(claim_id)
+        now = _now()
+        with self._lock, self._connection:
+            self._connection.execute(
+                """INSERT INTO coordination_tasks
+                (claim_id, project_id, claim_revision, status, created_at, updated_at)
+                VALUES (?, ?, ?, 'pending', ?, ?)
+                ON CONFLICT(claim_id) DO UPDATE SET
+                    project_id = excluded.project_id,
+                    claim_revision = excluded.claim_revision,
+                    status = 'pending',
+                    created_at = excluded.created_at,
+                    updated_at = excluded.updated_at""",
+                (
+                    claim_id,
+                    record.claim.project_id,
+                    record.revision,
+                    now,
+                    now,
+                ),
+            )
+            self._audit(
+                claim_id,
+                "coordination_requested",
+                {"claim_revision": record.revision},
+            )
+
+    def next_coordination_claim_id(self, project_id: str | None = None) -> str | None:
+        query = "SELECT claim_id FROM coordination_tasks WHERE status = 'pending'"
+        parameters: list[object] = []
+        if project_id:
+            query += " AND project_id = ?"
+            parameters.append(project_id)
+        query += " ORDER BY created_at LIMIT 1"
+        with self._lock:
+            row = self._connection.execute(query, parameters).fetchone()
+        return str(row["claim_id"]) if row else None
+
+    def complete_coordination(self, claim_id: str, coordinator_id: str) -> None:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE coordination_tasks SET status = 'completed', updated_at = ?
+                WHERE claim_id = ? AND status = 'pending'""",
+                (_now(), claim_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError(f"claim {claim_id} has no pending coordination task")
+            self._audit(
+                claim_id,
+                "coordination_completed",
+                {"coordinator_id": coordinator_id},
+            )
 
     def audit_events(self, claim_id: str) -> list[dict[str, object]]:
         with self._lock:

@@ -8,22 +8,27 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from .controller import Controller
-from .coordinator import RuleBasedCoordinator
-from .domain import ClaimState
+from .domain import ClaimState, Decision
+from .rules import BasicRuleChecker
 from .store import ClaimStore
 
 INSTRUCTIONS = """
 TCA coordinates coding-agent work in Git-enabled projects.
-After publishing a Claim branch, call wait_for_decision before shared code changes.
-Only start when allowed_actions includes start_execution.
-Send heartbeat and progress while executing, and call complete_claim when done.
-The Controller is authoritative; do not infer state from local memory.
+A: after publishing a Claim branch, call wait_for_decision before shared code changes.
+A: only start when allowed_actions includes start_execution; report progress and completion.
+M: use get_coordination_task and submit_coordination_decision.
+The Controller is authoritative; A and M must not infer state from local memory.
 """.strip()
 
 
 def build_controller() -> Controller:
     database = Path(os.getenv("TCA_DATABASE", "tca.db"))
-    return Controller(ClaimStore(database), RuleBasedCoordinator())
+    coordination_mode = os.getenv("TCA_COORDINATION_MODE", "rules")
+    return Controller(
+        ClaimStore(database),
+        BasicRuleChecker(),
+        require_external_coordination=coordination_mode == "external",
+    )
 
 
 def create_mcp(controller: Controller | None = None) -> FastMCP:
@@ -39,14 +44,14 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
 
     @mcp.tool()
     def get_claim_state(claim_id: str) -> dict[str, object]:
-        """Get authoritative Claim state, decision, constraints, and allowed actions."""
+        """For A: get authoritative state, constraints, and allowed actions."""
         return controller.get_claim_state(claim_id)
 
     @mcp.tool()
     async def wait_for_decision(
         claim_id: str, timeout_seconds: float = 30.0, poll_seconds: float = 0.25
     ) -> dict[str, object]:
-        """Wait until C finishes assessing a Claim, or return when the timeout expires."""
+        """For A: wait until C finishes assessing a Claim or timeout expires."""
         deadline = time.monotonic() + max(0.0, timeout_seconds)
         pending = {ClaimState.RECEIVED.value, ClaimState.ASSESSING.value}
         while True:
@@ -57,23 +62,55 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
 
     @mcp.tool()
     def start_execution(claim_id: str) -> dict[str, object]:
-        """Move an approved Claim into executing state before shared code changes."""
+        """For A: move an approved Claim to executing before shared changes."""
         return controller.start_execution(claim_id).to_mapping()
 
     @mcp.tool()
     def heartbeat(claim_id: str) -> dict[str, object]:
-        """Record that work on an active Claim is still alive."""
+        """For A: record that work on an active Claim is alive."""
         return controller.heartbeat(claim_id).to_mapping()
 
     @mcp.tool()
-    def update_progress(claim_id: str, status: str, message: str = "") -> dict[str, object]:
-        """Record executing, waiting, or blocked progress without changing Claim scope."""
+    def update_progress(
+        claim_id: str, status: str, message: str = ""
+    ) -> dict[str, object]:
+        """For A: record progress without changing Claim scope."""
         return controller.update_progress(claim_id, status, message).to_mapping()
 
     @mcp.tool()
     def complete_claim(claim_id: str) -> dict[str, object]:
-        """Complete an executing Claim and trigger reevaluation of dependent work."""
+        """For A: complete executing work and trigger dependent reevaluation."""
         return controller.complete_claim(claim_id).to_mapping()
+
+    @mcp.tool()
+    def get_coordination_task(project_id: str = "") -> dict[str, object] | None:
+        """For M: get the oldest Claim awaiting semantic coordination."""
+        task = controller.get_coordination_task(project_id or None)
+        return task.to_mapping() if task else None
+
+    @mcp.tool()
+    def submit_coordination_decision(
+        claim_id: str,
+        state: str,
+        reason: str,
+        coordinator_id: str,
+        constraints: list[str] | None = None,
+        wait_for: list[str] | None = None,
+        conflicts_with: list[str] | None = None,
+    ) -> dict[str, object]:
+        """For M: submit a recommendation; C validates and applies it."""
+        decision = Decision.from_mapping(
+            {
+                "state": state,
+                "reason": reason,
+                "constraints": constraints or [],
+                "wait_for": wait_for or [],
+                "conflicts_with": conflicts_with or [],
+            }
+        )
+        return controller.submit_coordination_decision(
+            claim_id, decision, coordinator_id
+        ).to_mapping()
 
     return mcp
 

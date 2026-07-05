@@ -128,6 +128,18 @@ class ClaimRecord:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class CoordinationTask:
+    claim: ClaimRecord
+    active_claims: tuple[ClaimRecord, ...]
+
+    def to_mapping(self) -> dict[str, Any]:
+        return {
+            "claim": self.claim.to_mapping(),
+            "active_claims": [record.to_mapping() for record in self.active_claims],
+        }
+
+
 def allowed_actions(state: ClaimState) -> tuple[str, ...]:
     return {
         ClaimState.RECEIVED: (),

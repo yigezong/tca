@@ -1,7 +1,9 @@
 from tca.controller import Controller
-from tca.coordinator import RuleBasedCoordinator
-from tca.domain import Claim, ClaimState
+from tca.domain import Claim, ClaimState, Decision
+from tca.rules import BasicRuleChecker
 from tca.store import ClaimStore
+
+import pytest
 
 
 def make_claim(
@@ -25,7 +27,7 @@ def make_claim(
 
 
 def make_controller() -> Controller:
-    return Controller(ClaimStore(), RuleBasedCoordinator())
+    return Controller(ClaimStore(), BasicRuleChecker())
 
 
 def test_claim_without_conflicts_is_approved() -> None:
@@ -79,3 +81,38 @@ def test_amend_requires_new_claim_version() -> None:
     )
     assert amended.claim.version == 2
     assert amended.state is ClaimState.APPROVED
+
+
+def test_external_m_gets_task_and_c_applies_its_decision() -> None:
+    controller = Controller(
+        ClaimStore(), BasicRuleChecker(), require_external_coordination=True
+    )
+    submitted = controller.submit_claim(make_claim("claim-1", ("src/login/**",)))
+
+    assert submitted.state is ClaimState.ASSESSING
+    task = controller.get_coordination_task("team/project")
+    assert task is not None
+    assert task.claim.claim.claim_id == "claim-1"
+
+    decided = controller.submit_coordination_decision(
+        "claim-1",
+        Decision(ClaimState.APPROVED, "semantic review found no conflict"),
+        "team-m",
+    )
+
+    assert decided.state is ClaimState.APPROVED
+    assert controller.get_coordination_task("team/project") is None
+
+
+def test_external_m_cannot_force_execution() -> None:
+    controller = Controller(
+        ClaimStore(), BasicRuleChecker(), require_external_coordination=True
+    )
+    controller.submit_claim(make_claim("claim-1", ("src/login/**",)))
+
+    with pytest.raises(ValueError, match="cannot move"):
+        controller.submit_coordination_decision(
+            "claim-1",
+            Decision(ClaimState.EXECUTING, "skip approval"),
+            "bad-m",
+        )

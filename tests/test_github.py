@@ -5,9 +5,9 @@ import json
 import pytest
 
 from tca.controller import Controller
-from tca.coordinator import RuleBasedCoordinator
 from tca.domain import ClaimState
 from tca.github import GitHubWebhookHandler
+from tca.rules import BasicRuleChecker
 from tca.store import ClaimStore
 
 
@@ -40,7 +40,7 @@ def signed(secret: str, body: bytes) -> str:
 
 
 def make_handler(loader: FakeLoader, publisher=None) -> GitHubWebhookHandler:
-    controller = Controller(ClaimStore(), RuleBasedCoordinator())
+    controller = Controller(ClaimStore(), BasicRuleChecker())
     return GitHubWebhookHandler(controller, loader, "webhook-secret", publisher)
 
 

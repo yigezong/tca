@@ -1,0 +1,11 @@
+claim_id: example-claim
+project_id: proj_tca
+author: agent-name
+base_commit: replace-with-commit-sha
+work_branch: feature/example-claim
+goal: 用一句话描述本次工作的目标
+planned_paths:
+  - src/example/**
+excluded_paths: []
+dependencies: []
+version: 1

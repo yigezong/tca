@@ -12,9 +12,9 @@ from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 
 from .controller import Controller
-from .coordinator import RuleBasedCoordinator
 from .github import GitHubContentLoader, GitHubDecisionPublisher, GitHubWebhookHandler
 from .mcp_server import create_mcp
+from .rules import BasicRuleChecker
 from .store import ClaimStore
 
 
@@ -36,7 +36,12 @@ class BearerAuthMiddleware:
 
 def build_components() -> tuple[Controller, GitHubWebhookHandler]:
     database = Path(os.getenv("TCA_DATABASE", "tca.db"))
-    controller = Controller(ClaimStore(database), RuleBasedCoordinator())
+    controller = Controller(
+        ClaimStore(database),
+        BasicRuleChecker(),
+        require_external_coordination=os.getenv("TCA_COORDINATION_MODE", "rules")
+        == "external",
+    )
     github_token = os.getenv("GITHUB_TOKEN", "")
     api_url = os.getenv("GITHUB_API_URL", "https://api.github.com")
     loader = GitHubContentLoader(

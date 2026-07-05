@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-from typing import Protocol, Sequence
+from typing import Sequence
 
 from .domain import Claim, ClaimRecord, ClaimState, Decision
-
-
-class Coordinator(Protocol):
-    def assess(self, claim: Claim, active_claims: Sequence[ClaimRecord]) -> Decision: ...
 
 
 def _path_root(pattern: str) -> str:
@@ -23,10 +19,12 @@ def paths_overlap(left: str, right: str) -> bool:
     )
 
 
-class RuleBasedCoordinator:
-    """Deterministic M substitute used until an LLM coordinator is connected."""
+class BasicRuleChecker:
+    """C-owned deterministic checks. This is not M and performs no semantic judgment."""
 
-    def assess(self, claim: Claim, active_claims: Sequence[ClaimRecord]) -> Decision:
+    def check(
+        self, claim: Claim, active_claims: Sequence[ClaimRecord]
+    ) -> Decision | None:
         dependencies = [
             record.claim.claim_id
             for record in active_claims
@@ -61,7 +59,4 @@ class RuleBasedCoordinator:
                 conflicts_with=tuple(conflicts),
             )
 
-        return Decision(
-            state=ClaimState.APPROVED,
-            reason="no active dependency or path conflict found",
-        )
+        return None

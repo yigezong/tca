@@ -10,7 +10,6 @@ requires-python = ">=3.12"
 dependencies = ["PyYAML>=6.0", "mcp>=1.27,<2"]
 
 [project.scripts]
-tca-server = "tca.server:main"
 tca-mcp = "tca.mcp_server:main"
 tca-app = "tca.app:main"
 
