@@ -7,7 +7,7 @@ claim:
   decision_file: .tca/decision.yaml
 
 mcp:
-  url: http://localhost:8000/mcp
+  url: http://127.0.0.1:18080/mcp
   token_env: TCA_API_TOKEN
 
 coordination:
