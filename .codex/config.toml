@@ -1,0 +1,4 @@
+# 项目成员共享 TCA MCP 地址；Token 只从个人环境变量读取。
+[mcp_servers.tca]
+url = "http://127.0.0.1:8000/mcp"
+bearer_token_env_var = "TCA_API_TOKEN"

@@ -1,5 +1,5 @@
 version: 1
-project_id: proj_tca
+project_id: fringsoo/tca
 
 claim:
   branch_prefix: tca/claim/
