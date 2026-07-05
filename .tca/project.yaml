@@ -1,6 +1,11 @@
 version: 1
 project_id: fringsoo/tca
 
+git:
+  transport: local-bare
+  remote_name: origin
+  webhook_path: /webhooks/git
+
 claim:
   branch_prefix: tca/claim/
   file: .tca/claim.yaml

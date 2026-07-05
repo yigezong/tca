@@ -13,6 +13,7 @@ from starlette.routing import Mount, Route
 
 from .controller import Controller
 from .github import GitHubContentLoader, GitHubDecisionPublisher, GitHubWebhookHandler
+from .local_git import LocalGitWebhookHandler
 from .mcp_server import create_mcp
 from .rules import BasicRuleChecker
 from .store import ClaimStore
@@ -34,7 +35,7 @@ class BearerAuthMiddleware:
         await self.app(scope, receive, send)
 
 
-def build_components() -> tuple[Controller, GitHubWebhookHandler]:
+def build_components() -> tuple[Controller, GitHubWebhookHandler | None, LocalGitWebhookHandler]:
     database = Path(os.getenv("TCA_DATABASE", "tca.db"))
     controller = Controller(
         ClaimStore(database),
@@ -42,34 +43,43 @@ def build_components() -> tuple[Controller, GitHubWebhookHandler]:
         require_external_coordination=os.getenv("TCA_COORDINATION_MODE", "rules")
         == "external",
     )
-    github_token = os.getenv("GITHUB_TOKEN", "")
-    api_url = os.getenv("GITHUB_API_URL", "https://api.github.com")
-    loader = GitHubContentLoader(
-        token=github_token,
-        claim_path=os.getenv("TCA_CLAIM_PATH", ".tca/claim.yaml"),
-        api_url=api_url,
-    )
-    publisher = (
-        GitHubDecisionPublisher(
+    branch_prefix = os.getenv("TCA_CLAIM_BRANCH_PREFIX", "tca/claim/")
+    github_secret = os.getenv("GITHUB_WEBHOOK_SECRET", "")
+    github = None
+    if github_secret:
+        github_token = os.getenv("GITHUB_TOKEN", "")
+        api_url = os.getenv("GITHUB_API_URL", "https://api.github.com")
+        loader = GitHubContentLoader(
             token=github_token,
-            decision_path=os.getenv("TCA_DECISION_PATH", ".tca/decision.yaml"),
+            claim_path=os.getenv("TCA_CLAIM_PATH", ".tca/claim.yaml"),
             api_url=api_url,
         )
-        if github_token
-        else None
-    )
-    github = GitHubWebhookHandler(
+        publisher = (
+            GitHubDecisionPublisher(
+                token=github_token,
+                decision_path=os.getenv("TCA_DECISION_PATH", ".tca/decision.yaml"),
+                api_url=api_url,
+            )
+            if github_token
+            else None
+        )
+        github = GitHubWebhookHandler(
+            controller=controller,
+            loader=loader,
+            secret=github_secret,
+            publisher=publisher,
+            branch_prefix=branch_prefix,
+        )
+    local_git = LocalGitWebhookHandler(
         controller=controller,
-        loader=loader,
-        secret=os.environ["GITHUB_WEBHOOK_SECRET"],
-        publisher=publisher,
-        branch_prefix=os.getenv("TCA_CLAIM_BRANCH_PREFIX", "tca/claim/"),
+        secret=os.environ["TCA_WEBHOOK_SECRET"],
+        branch_prefix=branch_prefix,
     )
-    return controller, github
+    return controller, github, local_git
 
 
 def create_app() -> Starlette:
-    controller, github = build_components()
+    controller, github, local_git = build_components()
     mcp = create_mcp(controller)
 
     async def health(request: Request) -> JSONResponse:
@@ -82,11 +92,30 @@ def create_app() -> Starlette:
             return JSONResponse({"error": "claim not found"}, status_code=404)
 
     async def github_webhook(request: Request) -> JSONResponse:
+        if github is None:
+            return JSONResponse({"error": "GitHub webhook is disabled"}, status_code=404)
         try:
             record = github.handle(
                 await request.body(),
                 request.headers.get("x-hub-signature-256"),
                 request.headers.get("x-github-event"),
+            )
+            return JSONResponse(
+                {"accepted": record is not None, "claim": record.to_mapping() if record else None},
+                status_code=202,
+            )
+        except PermissionError as error:
+            return JSONResponse({"error": str(error)}, status_code=401)
+        except ValueError as error:
+            return JSONResponse({"error": str(error)}, status_code=400)
+
+    async def local_git_webhook(request: Request) -> JSONResponse:
+        try:
+            record = local_git.handle(
+                await request.body(),
+                request.headers.get("x-tca-signature"),
+                request.headers.get("x-tca-repository"),
+                request.headers.get("x-tca-ref"),
             )
             return JSONResponse(
                 {"accepted": record is not None, "claim": record.to_mapping() if record else None},
@@ -107,6 +136,7 @@ def create_app() -> Starlette:
             Route("/health", health),
             Route("/api/claims/{claim_id}", get_claim),
             Route("/webhooks/github", github_webhook, methods=["POST"]),
+            Route("/webhooks/git", local_git_webhook, methods=["POST"]),
             Mount("/", app=mcp.streamable_http_app()),
         ],
         lifespan=lifespan,
