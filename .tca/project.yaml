@@ -13,7 +13,7 @@ claim:
 
 mcp:
   url: http://127.0.0.1:18080/mcp
-  token_env: TCA_API_TOKEN
+  auth: local-loopback
 
 coordination:
   mode: external

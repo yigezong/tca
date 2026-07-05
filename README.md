@@ -40,7 +40,7 @@ AGENTS.md
 └── agreements/
 ```
 
-成员 clone 或 pull 后会得到相同协议，不需要各自修改 Markdown。每位成员只需在自己的 Agent 中配置个人 `TCA_API_TOKEN`；凭证不能提交到 Git。
+成员 clone 或 pull 后会得到相同协议，不需要各自修改 Markdown。当前自举服务仅监听 `127.0.0.1`，三个本机线程可直接连接；对外部署时必须启用凭证。
 
 ## 本地开发
 
