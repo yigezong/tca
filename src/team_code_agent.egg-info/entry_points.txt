@@ -1,4 +1,0 @@
-[console_scripts]
-tca-app = tca.app:main
-tca-mcp = tca.mcp_server:main
-tca-server = tca.server:main
