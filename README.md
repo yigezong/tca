@@ -76,4 +76,4 @@ Event: Push events
 
 `/health` 和签名 Webhook 可公开访问；`/mcp` 与 `/api/claims/*` 需要 Bearer Token。当前 V1 面向受信任小团队，A/M 暂时共享服务 Token；角色级 Token 是后续增强项。
 
-完整协议见 [`.tca/protocol.md`](.tca/protocol.md)，产品模型见 [`docs/ideas/project-idea.md`](docs/ideas/project-idea.md)。
+新成员请先阅读 [`docs/online-team-onboarding.md`](docs/online-team-onboarding.md)，其中包含实现原理、部署配置和自举开发流程。完整协议见 [`.tca/protocol.md`](.tca/protocol.md)，产品模型见 [`docs/ideas/project-idea.md`](docs/ideas/project-idea.md)。
