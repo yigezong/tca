@@ -2,9 +2,9 @@ version: 1
 project_id: fringsoo/tca
 
 git:
-  transport: local-bare
+  transport: github
   remote_name: origin
-  webhook_path: /webhooks/git
+  webhook_path: /webhooks/github
 
 claim:
   branch_prefix: tca/claim/
@@ -12,8 +12,9 @@ claim:
   decision_file: .tca/decision.yaml
 
 mcp:
-  url: http://127.0.0.1:18080/mcp
-  auth: local-loopback
+  url: pending-vercel-deployment
+  auth: bearer-token
+  token_env: TCA_API_TOKEN
 
 coordination:
   mode: external

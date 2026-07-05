@@ -263,3 +263,15 @@ class ClaimStore:
             decision=Decision.from_mapping(decision) if decision else None,
             updated_at=row["updated_at"],
         )
+
+
+def build_store():
+    """Use Neon/Postgres when DATABASE_URL is set, otherwise local SQLite."""
+    import os
+
+    database_url = os.getenv("DATABASE_URL", "").strip()
+    if database_url:
+        from .postgres_store import PostgresClaimStore
+
+        return PostgresClaimStore(database_url)
+    return ClaimStore(Path(os.getenv("TCA_DATABASE", "tca.db")))

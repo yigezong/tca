@@ -1,3 +1,2 @@
-# 本机自举测试：TCA 仅监听 127.0.0.1，因此不使用远程鉴权。
-[mcp_servers.tca]
-url = "http://127.0.0.1:18080/mcp"
+# TCA MCP 将在首次 Vercel 部署生成域名后写入。
+# 不在仓库中保存 TCA_API_TOKEN。

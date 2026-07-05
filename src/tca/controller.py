@@ -9,7 +9,7 @@ from .domain import (
     allowed_actions,
 )
 from .rules import BasicRuleChecker
-from .store import ClaimStore
+from .store_protocol import Store
 
 
 class Controller:
@@ -17,7 +17,7 @@ class Controller:
 
     def __init__(
         self,
-        store: ClaimStore,
+        store: Store,
         rule_checker: BasicRuleChecker,
         *,
         require_external_coordination: bool = False,

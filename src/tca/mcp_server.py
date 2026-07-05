@@ -3,14 +3,13 @@ from __future__ import annotations
 import asyncio
 import os
 import time
-from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
 from .controller import Controller
 from .domain import ClaimState, Decision
 from .rules import BasicRuleChecker
-from .store import ClaimStore
+from .store import build_store
 
 INSTRUCTIONS = """
 TCA coordinates coding-agent work in Git-enabled projects.
@@ -22,10 +21,9 @@ The Controller is authoritative; A and M must not infer state from local memory.
 
 
 def build_controller() -> Controller:
-    database = Path(os.getenv("TCA_DATABASE", "tca.db"))
     coordination_mode = os.getenv("TCA_COORDINATION_MODE", "rules")
     return Controller(
-        ClaimStore(database),
+        build_store(),
         BasicRuleChecker(),
         require_external_coordination=coordination_mode == "external",
     )
