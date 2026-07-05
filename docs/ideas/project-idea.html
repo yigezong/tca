@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Team Code Agent 项目概念、协作协议、状态机与实现形态说明。">
+  <title>Team Code Agent 项目说明</title>
+  <style>
+    :root { --bg:#f4f6f8;--surface:#fff;--surface-2:#f8fafc;--text:#17202a;--muted:#64748b;--line:#dce3ea;--accent:#2563eb;--accent-soft:#e8f0ff;--quote:#0f766e;--code-bg:#111827;--code-text:#e5edf7;--shadow:0 12px 36px rgba(15,23,42,.08);--content:860px;--nav:286px; }
+    @media (prefers-color-scheme:dark) { :root { --bg:#0c111b;--surface:#121a27;--surface-2:#172131;--text:#e7edf5;--muted:#9baabd;--line:#2b394b;--accent:#82aaff;--accent-soft:#1d3155;--quote:#5eead4;--code-bg:#080d15;--code-text:#dbeafe;--shadow:none; } }
+    * { box-sizing:border-box } html { scroll-behavior:smooth;scroll-padding-top:24px }
+    body { margin:0;background:var(--bg);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;line-height:1.75 }
+    a { color:var(--accent);text-decoration-thickness:.08em;text-underline-offset:.18em }
+    .layout { width:min(100% - 32px,calc(var(--nav) + var(--content) + 72px));margin:0 auto;display:grid;grid-template-columns:var(--nav) minmax(0,var(--content));gap:48px;align-items:start }
+    .toc { position:sticky;top:18px;max-height:calc(100vh - 36px);overflow:auto;padding:22px 18px;margin-top:24px;border:1px solid var(--line);border-radius:16px;background:var(--surface);box-shadow:var(--shadow);font-size:14px }
+    .toc-title { margin:0 0 12px;font-weight:750;font-size:15px;letter-spacing:.04em } .toc ul { list-style:none;padding:0;margin:0 } .toc li { margin:2px 0 }
+    .toc a { display:block;color:var(--muted);padding:5px 8px;border-radius:7px;text-decoration:none;line-height:1.35 } .toc a:hover { color:var(--text);background:var(--accent-soft) }
+    .toc-l3 { padding-left:12px } .toc-l4,.toc-l5,.toc-l6 { padding-left:24px }
+    main { min-width:0;margin:24px 0 64px;padding:54px 64px 72px;border:1px solid var(--line);border-radius:18px;background:var(--surface);box-shadow:var(--shadow) }
+    .eyebrow { color:var(--accent);font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.14em } .updated,.source-link { color:var(--muted);font-size:14px } .updated { margin:.35em 0 0 } .source-link { margin:.2em 0 0 }
+    h1 { margin:.15em 0 .25em;font-size:clamp(2rem,5vw,3.35rem);line-height:1.12;letter-spacing:-.035em } .subtitle { margin:0 0 44px;color:var(--muted);font-size:15px }
+    h2 { margin:2.4em 0 .8em;padding-top:.4em;border-top:1px solid var(--line);font-size:1.75rem;line-height:1.3;letter-spacing:-.02em } h3 { margin:1.9em 0 .65em;font-size:1.25rem;line-height:1.4 } h4 { margin:1.5em 0 .55em;font-size:1.05rem }
+    .heading-anchor { opacity:0;margin-left:.4em;font-size:.65em;text-decoration:none } h2:hover .heading-anchor,h3:hover .heading-anchor,h4:hover .heading-anchor { opacity:.7 }
+    p { margin:.75em 0 1em } ul,ol { padding-left:1.45em } li { margin:.28em 0 }
+    blockquote { margin:1.35em 0;padding:.75em 1.2em;border-left:4px solid var(--quote);background:var(--surface-2);color:var(--text);border-radius:0 10px 10px 0 } blockquote p { margin:.2em 0 }
+    code { padding:.12em .35em;border:1px solid var(--line);border-radius:5px;background:var(--surface-2);font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;font-size:.9em }
+    pre { overflow:auto;margin:1.25em 0;padding:18px 20px;border-radius:12px;background:var(--code-bg);color:var(--code-text);line-height:1.55;box-shadow:inset 0 0 0 1px rgba(148,163,184,.16) } pre code { padding:0;border:0;background:transparent;color:inherit;font-size:13px }
+    pre.mermaid { background:var(--surface-2);color:var(--text);text-align:center;white-space:pre-wrap } .mermaid svg { max-width:100%;height:auto }
+    .table-wrap { width:100%;overflow-x:auto;margin:1.2em 0 1.55em;border:1px solid var(--line);border-radius:12px } table { width:100%;border-collapse:collapse;font-size:14px;background:var(--surface) }
+    th,td { padding:10px 13px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);text-align:left;vertical-align:top } th:last-child,td:last-child { border-right:0 } tr:last-child td { border-bottom:0 } th { background:var(--surface-2);font-weight:750;white-space:nowrap }
+    hr { border:0;border-top:1px solid var(--line);margin:2em 0 } .top { position:fixed;right:20px;bottom:20px;width:42px;height:42px;display:grid;place-items:center;border:1px solid var(--line);border-radius:50%;background:var(--surface);box-shadow:var(--shadow);text-decoration:none }
+    @media (max-width:1050px) { .layout { display:block;width:min(100% - 24px,var(--content)) } .toc { position:relative;top:auto;max-height:none;margin:12px 0 } main { margin:12px 0 48px } }
+    @media (max-width:640px) { main { padding:34px 22px 50px;border-radius:12px } .toc { border-radius:12px } h2 { font-size:1.5rem } }
+    @media print { :root { --bg:#fff;--surface:#fff;--text:#000;--muted:#444;--line:#bbb } body { background:#fff;font-size:10.5pt } .layout { display:block;width:100% } .toc,.top,.heading-anchor { display:none } main { max-width:none;margin:0;padding:0;border:0;box-shadow:none } h2,h3 { break-after:avoid } pre,blockquote,.table-wrap { break-inside:avoid } a { color:inherit } }
+  </style>
+</head>
+<body id="top">
+  <div class="layout">
+    <aside class="toc" aria-label="文档目录"><div class="toc-title">目录</div><ul><li class="toc-l2"><a href="#1.-要解决的问题">1. 要解决的问题</a></li>
+<li class="toc-l2"><a href="#2.-最核心的方案">2. 最核心的方案</a></li>
+<li class="toc-l2"><a href="#3.-c、m、a-到底是什么关系">3. C、M、A 到底是什么关系</a></li>
+<li class="toc-l3"><a href="#3.1-c核心控制程序">3.1 C：核心控制程序</a></li>
+<li class="toc-l3"><a href="#3.2-m通用语义判断模块">3.2 M：通用语义判断模块</a></li>
+<li class="toc-l3"><a href="#3.3-a-从-c-得到什么">3.3 A 从 C 得到什么</a></li>
+<li class="toc-l2"><a href="#4.-a1-到底怎样提交-claim">4. A1 到底怎样提交 Claim</a></li>
+<li class="toc-l3"><a href="#4.1-用-git-分支发布-claim">4.1 用 Git 分支发布 Claim</a></li>
+<li class="toc-l3"><a href="#4.2-mcp-仍然保留">4.2 MCP 仍然保留</a></li>
+<li class="toc-l2"><a href="#5.-状态在哪里维护">5. 状态在哪里维护</a></li>
+<li class="toc-l3"><a href="#5.1-agent-的连接状态">5.1 Agent 的连接状态</a></li>
+<li class="toc-l3"><a href="#5.2-工作的-claim-状态">5.2 工作的 Claim 状态</a></li>
+<li class="toc-l2"><a href="#6.-一次工作具体怎么走">6. 一次工作具体怎么走</a></li>
+<li class="toc-l2"><a href="#7.-git、webhook、mcp-与-tca-怎样连接">7. Git、Webhook、MCP 与 TCA 怎样连接</a></li>
+<li class="toc-l3"><a href="#7.1-git-remote-不是-tca-节点">7.1 Git Remote 不是 TCA 节点</a></li>
+<li class="toc-l3"><a href="#7.2-mcp-连接的是-agent-与-tca">7.2 MCP 连接的是 Agent 与 TCA</a></li>
+<li class="toc-l3"><a href="#7.3-c-和-m-如何部署">7.3 C 和 M 如何部署</a></li>
+<li class="toc-l3"><a href="#7.4-repo-配置">7.4 repo 配置</a></li>
+<li class="toc-l2"><a href="#8.-a-和-m-怎么知道要遵守-tca">8. A 和 M 怎么知道要遵守 TCA</a></li>
+<li class="toc-l3"><a href="#8.1-m-的协议由-c-强制注入">8.1 M 的协议由 C 强制注入</a></li>
+<li class="toc-l3"><a href="#8.2-a-通过-mcp-获得协议说明">8.2 A 通过 MCP 获得协议说明</a></li>
+<li class="toc-l3"><a href="#8.3-最终由-git-门禁兜底">8.3 最终由 Git 门禁兜底</a></li>
+<li class="toc-l2"><a href="#9.-部署和团队配置">9. 部署和团队配置</a></li>
+<li class="toc-l3"><a href="#9.1-tca-server-部署在哪里">9.1 TCA Server 部署在哪里</a></li>
+<li class="toc-l3"><a href="#9.2-团队管理员配置一次">9.2 团队管理员配置一次</a></li>
+<li class="toc-l3"><a href="#9.3-每个成员配置一次">9.3 每个成员配置一次</a></li>
+<li class="toc-l3"><a href="#9.4-第一版实现范围">9.4 第一版实现范围</a></li>
+<li class="toc-l2"><a href="#10.-还需要继续决定的事情">10. 还需要继续决定的事情</a></li></ul></aside>
+    <main><div class="eyebrow">Project Idea · HTML 阅读版</div><div class="subtitle">由 <code>project-idea.md</code> 同步生成，正文内容保持一致。</div><h1 id="team-code-agent-项目说明">Team Code Agent 项目说明</h1>
+<div class="updated">最后更新：2026-07-05</div>
+<div class="source-link">飞书链接：<a href="https://my.feishu.cn/wiki/YLuCwPwePiLeWzkEccKc9mqrnCh?from=from_copylink">https://my.feishu.cn/wiki/YLuCwPwePiLeWzkEccKc9mqrnCh?from=from_copylink</a></div>
+<h2 id="1.-要解决的问题">1. 要解决的问题<a class="heading-anchor" href="#1.-要解决的问题" aria-label="链接到本节">#</a></h2>
+<p>AI coding agent 让单个开发者写代码的速度大幅提高，但团队协调速度没有同步提高。当多个成员各自带着 Agent，在同一个项目里并行工作时，会出现一组新的协作问题。</p>
+<ul>
+<li><strong>意图不可见</strong>：别人只看到最终 diff，不知道某个 Agent 正准备做什么、为什么做、边界在哪里。</li>
+<li><strong>冲突发现太晚</strong>：两项修改即使没有文本冲突，也可能同时改变同一个接口、数据模型或产品行为。</li>
+<li><strong>重复劳动</strong>：多个 Agent 可能在不知道彼此存在的情况下解决同一个问题。</li>
+<li><strong>范围逐渐扩大</strong>：任务可能从局部修复变成公共接口修改或大范围重构，但团队仍按最初的小任务理解它。</li>
+<li><strong>依赖和阻塞不清楚</strong>：一项工作在等待谁、被等待的一方是否还在做、何时应该催更或释放，都没有统一记录。</li>
+<li><strong>目标不一定明确</strong>：使用者可能只给 Agent 一个方向。团队协调者可以替他判断到什么程度、何时必须回来询问，需要明确边界。</li>
+<li><strong>上下文彼此割裂</strong>：每个 Agent 只有自己的局部上下文，没有团队当前正在做什么的共同视图。</li>
+<li><strong>流程无法只靠 Prompt 保证</strong>：Agent 可能忘记汇报、跳过步骤或误解约定，需要一个确定性程序控制关键状态。</li>
+<li><strong>Review 成本增加</strong>：Reviewer 需要从大量代码反推最初目标、冲突处理和中途决策。</li>
+</ul>
+<p>Git 和 Pull Request 仍然重要，但它们主要处理已经产生的代码。TCA 想补上的是代码进入共享范围之前和执行过程中的协调。</p>
+<h2 id="2.-最核心的方案">2. 最核心的方案<a class="heading-anchor" href="#2.-最核心的方案" aria-label="链接到本节">#</a></h2>
+<p>TCA 是一个以 C 为中心的共享服务。A 和 M 不直接通信，所有事件、判断与状态变化都经过 C。</p>
+<pre class="mermaid" aria-label="流程图">flowchart LR
+    A1[&quot;A1：个人 Coding Agent&quot;] --&gt;|&quot;push Claim 分支&quot;| G[&quot;团队 Git Remote&quot;]
+    A2[&quot;A2：个人 Coding Agent&quot;] --&gt;|&quot;push Claim 分支&quot;| G
+
+    subgraph T[&quot;共享 TCA Server&quot;]
+      W[&quot;Webhook 接口&quot;] --&gt; C[&quot;C：Controller 核心程序&quot;]
+      E[&quot;MCP 接口&quot;] --&gt; C
+      C &lt;--&gt; DB[&quot;权威状态数据库&quot;]
+      C --&gt;|判断任务| M[&quot;M：通用协调引擎&quot;]
+      M --&gt;|判断建议| C
+    end
+
+    G --&gt;|webhook| W
+    A1 &lt;--&gt;|&quot;MCP：状态 / 进度&quot;| E
+    A2 &lt;--&gt;|&quot;MCP：状态 / 进度&quot;| E
+</pre>
+<p>两条输入通道最终都进入 C：</p>
+<ul>
+<li>Git 分支和 webhook 负责发布 Claim、amend 和代码事实。</li>
+<li>MCP 负责让 A 查询状态、接收约束、heartbeat、更新进度和报告完成。</li>
+</ul>
+<p>C 是 TCA Server 中运行的核心普通程序；M 是 C 调用的语义判断模块。团队不需要为每个项目定制 M，也不需要部署多个 C。</p>
+<h2 id="3.-c、m、a-到底是什么关系">3. C、M、A 到底是什么关系<a class="heading-anchor" href="#3.-c、m、a-到底是什么关系" aria-label="链接到本节">#</a></h2>
+<p>关系可以压缩成一句话：<strong>C 是唯一通信中枢和状态权威，A 与 M 都只和 C 交互。</strong></p>
+<pre><code class="language-text">A → C：Claim 事件、进度、范围变化、完成报告
+C → M：需要判断的 Claim、活跃 Claim、代码事实和团队约定
+M → C：冲突、依赖和协调建议
+C → A：state、constraints 和 allowed_actions
+</code></pre>
+<h3 id="3.1-c核心控制程序">3.1 C：核心控制程序<a class="heading-anchor" href="#3.1-c核心控制程序" aria-label="链接到本节">#</a></h3>
+<p>C 不需要使用 Agent 或 LLM，实现为普通后端程序即可。它负责：</p>
+<ul>
+<li>接收 Git webhook 与 MCP 请求。</li>
+<li>验证 repo、Agent、Claim 格式、权限和版本。</li>
+<li>读写数据库并维护 Claim 状态机。</li>
+<li>组织输入并调用 M。</li>
+<li>校验 M 的输出是否合法、是否仍对应最新版本。</li>
+<li>把结果转化为状态、约束和 <code>allowed_actions</code>。</li>
+<li>通过 MCP 或 Git decision 把结果返回给 A。</li>
+</ul>
+<p>C 不凭空制定业务目标。目标来自 P，语义协调建议来自 M，协议决定当前允许哪些动作；C 负责整合、记录和执行。</p>
+<h3 id="3.2-m通用语义判断模块">3.2 M：通用语义判断模块<a class="heading-anchor" href="#3.2-m通用语义判断模块" aria-label="链接到本节">#</a></h3>
+<p>M 可以由 LLM/Agent 实现，但不是一个自由运行、直接指挥 A 的团队成员。每次由 C 调用，并收到固定的 TCA system prompt、输入数据和输出 schema。</p>
+<p>M 只负责：</p>
+<ul>
+<li>理解多个 Claim 是否语义冲突。</li>
+<li>判断依赖、共享边界和潜在风险。</li>
+<li>建议批准、带约束批准、等待、阻塞或找人决定。</li>
+<li>给出理由。</li>
+</ul>
+<p>M 没有数据库写权限，也不能直接向 A 发命令。即使 M 输出了非法动作，C 也会拒绝。</p>
+<h3 id="3.3-a-从-c-得到什么">3.3 A 从 C 得到什么<a class="heading-anchor" href="#3.3-a-从-c-得到什么" aria-label="链接到本节">#</a></h3>
+<p>A 通过 MCP 查询 C，而不是直接询问 M。C 返回：</p>
+<pre><code class="language-yaml">claim_id: claim-42
+state: approved_with_constraints
+constraints:
+  - 不修改 src/session/**
+allowed_actions:
+  - start_execution
+  - amend_claim
+  - abandon_claim
+</code></pre>
+<p>如果 MCP Client 不支持服务主动唤醒，A 使用 <code>wait_for_decision</code> 长轮询或定期调用 <code>get_claim_state</code>。C 同时可以把 decision 写回 Git，作为兼容方式和审计记录。</p>
+<h2 id="4.-a1-到底怎样提交-claim">4. A1 到底怎样提交 Claim<a class="heading-anchor" href="#4.-a1-到底怎样提交-claim" aria-label="链接到本节">#</a></h2>
+<h3 id="4.1-用-git-分支发布-claim">4.1 用 Git 分支发布 Claim<a class="heading-anchor" href="#4.1-用-git-分支发布-claim" aria-label="链接到本节">#</a></h3>
+<p>A1 基于当前代码版本创建专门的 Claim 分支：</p>
+<pre><code class="language-text">分支：tca/claim/claim-42
+
+.tca/
+├── claim.yaml       # A1 写入
+└── decision.yaml    # TCA 写回
+</code></pre>
+<p><code>claim.yaml</code> 示例：</p>
+<pre><code class="language-yaml">claim_id: claim-42
+author: agent-alice
+base_commit: a1b2c3d
+work_branch: feature/login-fix
+goal: 修复登录重定向
+planned_paths:
+  - src/login/**
+excluded_paths:
+  - src/session/**
+</code></pre>
+<p>A1 执行：</p>
+<pre><code class="language-bash">git push origin tca/claim/claim-42
+</code></pre>
+<p>此时的接收链路是：</p>
+<pre><code class="language-text">A1 push
+  → 团队现有 Git Remote 接收分支
+  → GitHub/GitLab webhook 通知 TCA
+  → C 拉取并校验 claim.yaml
+  → C 写数据库并调用 M
+  → C 把 decision 写回 Claim 分支或 Git status
+</code></pre>
+<p>所以：传输层接收者是 Git Remote，业务处理者是 C，语义理解者是 M。</p>
+<h3 id="4.2-mcp-仍然保留">4.2 MCP 仍然保留<a class="heading-anchor" href="#4.2-mcp-仍然保留" aria-label="链接到本节">#</a></h3>
+<p>MCP 不作为 Claim 的唯一提交方式，而是实时控制接口：</p>
+<pre><code class="language-text">get_claim_state       查询 Claim 状态
+get_allowed_actions   查询下一步允许动作
+heartbeat             报告 Agent 在线
+update_progress       更新进度、等待或阻塞
+request_coordination  请求人工协调
+complete_claim        报告执行完成
+</code></pre>
+<p>不支持 MCP 的 Agent 仍能通过 Git 分支读取 <code>.tca/decision.yaml</code>；支持 MCP 的 Agent 可以立即查询结果和更新进度。</p>
+<h2 id="5.-状态在哪里维护">5. 状态在哪里维护<a class="heading-anchor" href="#5.-状态在哪里维护" aria-label="链接到本节">#</a></h2>
+<p>每个节点不各自维护一套权威状态机。所有权威状态都集中保存在 TCA 服务中，否则断线后很容易出现不同 Agent 各自认为自己是对的。</p>
+<p>TCA 维护两类不同的状态。</p>
+<h3 id="5.1-agent-的连接状态">5.1 Agent 的连接状态<a class="heading-anchor" href="#5.1-agent-的连接状态" aria-label="链接到本节">#</a></h3>
+<p>Connection Manager 维护每个 A 是否在线：</p>
+<pre><code class="language-text">connecting → online → offline
+</code></pre>
+<p>连接过程：</p>
+<ol>
+<li>A 通过 MCP 发送自己的身份、项目 ID、协议版本和认证 token。</li>
+<li>TCA 校验通过后创建 session，将 A 标记为 <code>online</code>。</li>
+<li>A 每隔一段时间发送 heartbeat。</li>
+<li>例如连续 90 秒没有 heartbeat，TCA 将 A 标记为 <code>offline</code>。</li>
+<li>A 重连后使用原来的身份创建新 session，并从 TCA 重新读取工作状态。</li>
+</ol>
+<h3 id="5.2-工作的-claim-状态">5.2 工作的 Claim 状态<a class="heading-anchor" href="#5.2-工作的-claim-状态" aria-label="链接到本节">#</a></h3>
+<p>A 提交的“我准备做什么”称为工作声明，即 Claim。Controller 为每个 Claim 维护状态：</p>
+<pre><code class="language-text">已提交 → 正在判断 → 已批准 → 执行中 → 已完成
+                    ↘ 等待 / 需要人决定 / 阻塞
+</code></pre>
+<p>Claim 状态回答的是“这项工作现在能不能继续”，而连接状态回答的是“这个 Agent 现在是否在线”。二者不能混为一谈：Agent 暂时离线，不代表它的工作立即失效；Agent 长期不更新后，Claim 才会被标记为 stale，并触发催更或释放流程。</p>
+<p>A 本地可以缓存状态，但每次关键操作前都应重新查询 TCA。TCA 数据库里的版本才是权威版本。</p>
+<h2 id="6.-一次工作具体怎么走">6. 一次工作具体怎么走<a class="heading-anchor" href="#6.-一次工作具体怎么走" aria-label="链接到本节">#</a></h2>
+<pre class="mermaid" aria-label="流程图">flowchart TD
+    P[&quot;人向 A1 提出目标&quot;] --&gt; B[&quot;A1 创建 Claim 分支并 push&quot;]
+    B --&gt; G[&quot;Git Remote 接收分支&quot;]
+    G --&gt;|webhook| C[&quot;C 校验 claim.yaml 并写数据库&quot;]
+    C --&gt; M[&quot;M 比较其他 Claim、代码和团队约定&quot;]
+    M --&gt; C
+    C --&gt; D{&quot;判断结果&quot;}
+    D --&gt;|可以做| E[&quot;写回 Approved；A1 开始执行&quot;]
+    D --&gt;|需要等待| W[&quot;记录等待对象和催更时间&quot;]
+    D --&gt;|需要人决定| H[&quot;通知相关人员或 Owner&quot;]
+    W --&gt; M
+    H --&gt; M
+    E --&gt; X{&quot;实际范围变了吗？&quot;}
+    X --&gt;|变了| R[&quot;A1 更新 Claim 分支并再次 push&quot;]
+    R --&gt; G
+    X --&gt;|没变| F[&quot;A1 完成代码并通过 MCP 报告&quot;]
+    F --&gt; Z[&quot;C 关闭 Claim，唤醒等待者&quot;]
+</pre>
+<p>以“修改登录流程”为例：</p>
+<ol>
+<li>A1 创建 <code>tca/claim/claim-42</code>，写入 <code>.tca/claim.yaml</code>，然后 push 到团队现有 Git Remote。</li>
+<li>GitHub/GitLab webhook 向 TCA 发出 push 事件。</li>
+<li>C 读取 Claim，检查身份、格式和版本，写入数据库，状态变为 <code>Assessing</code>。</li>
+<li>C 调用通用 M。M 发现 A2 正在修改共享 session 接口，建议登录 UI 可以先做，session 调用应等待。</li>
+<li>C 校验建议并保存状态，把 <code>.tca/decision.yaml</code> 写回 Claim 分支；支持 MCP 的 A1 也可立即查询结果。</li>
+<li>A1 执行期间通过 MCP heartbeat 和更新进度。</li>
+<li>如果范围扩大，A1 修改并再次 push Claim 分支，webhook 触发重新评估。</li>
+<li>完成后 A1 通过 MCP 报告完成；代码 push 和 PR 则由 Git 保存与审查。</li>
+</ol>
+<h2 id="7.-git、webhook、mcp-与-tca-怎样连接">7. Git、Webhook、MCP 与 TCA 怎样连接<a class="heading-anchor" href="#7.-git、webhook、mcp-与-tca-怎样连接" aria-label="链接到本节">#</a></h2>
+<h3 id="7.1-git-remote-不是-tca-节点">7.1 Git Remote 不是 TCA 节点<a class="heading-anchor" href="#7.1-git-remote-不是-tca-节点" aria-label="链接到本节">#</a></h3>
+<p>Git Remote 就是团队已经在用的 GitHub、GitLab 或其他 Git 仓库。它负责保存 Claim 分支和代码，不维护 TCA 状态机。</p>
+<p>Webhook 可以理解为 Git 平台在 push 后主动通知 TCA：</p>
+<pre><code class="language-text">GitHub/GitLab 收到 push
+          ↓ HTTP POST
+https://tca.example.com/webhooks/github
+          ↓
+C 处理事件
+</code></pre>
+<p>只要团队对 repo 有 webhook/App 安装权限，并且 TCA 有 Git 平台可访问的 HTTPS 地址，就可以接入普通 GitHub/GitLab repo。没有 webhook 时，原型也可以由 TCA 轮询 Claim 分支。</p>
+<h3 id="7.2-mcp-连接的是-agent-与-tca">7.2 MCP 连接的是 Agent 与 TCA<a class="heading-anchor" href="#7.2-mcp-连接的是-agent-与-tca" aria-label="链接到本节">#</a></h3>
+<p>支持 MCP 的 A 会连接 TCA 的 MCP 地址：</p>
+<pre><code class="language-text">A ──MCP──&gt; https://tca.example.com/mcp ──&gt; C
+</code></pre>
+<p>这个连接用于查询状态、heartbeat、进度和完成报告。它不替代 Git Claim 分支。</p>
+<p>不支持 MCP 的 Agent 仍可完成 Claim 发布和读取 Git 中的 decision，但实时状态体验会弱一些；后续可以提供 <code>tca</code> CLI 调用同一套 HTTP API。</p>
+<h3 id="7.3-c-和-m-如何部署">7.3 C 和 M 如何部署<a class="heading-anchor" href="#7.3-c-和-m-如何部署" aria-label="链接到本节">#</a></h3>
+<p>C 与 M 是通用 TCA 后端的逻辑模块，不是每个团队都要定制的两个进程：</p>
+<pre><code class="language-text">通用 TCA 后端（托管版或统一容器）
+├── Webhook 接入
+├── MCP 接入
+├── C：普通程序、状态机、数据库
+├── M：通用 LLM/Agent 协调引擎
+└── GitHub/GitLab Adapter
+</code></pre>
+<p>第一版可以把这些模块放在一个应用中，之后也可以拆分服务。无论怎样部署，所有团队共用同一套 C 和 M；项目差异来自 Claim、代码和 <code>.tca/agreements/</code>。</p>
+<h3 id="7.4-repo-配置">7.4 repo 配置<a class="heading-anchor" href="#7.4-repo-配置" aria-label="链接到本节">#</a></h3>
+<pre><code class="language-yaml">project:
+  id: proj_tca
+
+tca:
+  mcp_url: https://tca.example.com/mcp
+  token_env: TCA_TOKEN
+
+git:
+  remote: origin
+  claim_branch_prefix: tca/claim/
+  decision_output: branch
+
+connection:
+  heartbeat_seconds: 30
+  offline_after_seconds: 90
+</code></pre>
+<p>YAML 保存项目 ID、TCA 地址和 Git 约定，不保存实时状态或 token。实时状态统一保存在 C 的数据库中。</p>
+<h2 id="8.-a-和-m-怎么知道要遵守-tca">8. A 和 M 怎么知道要遵守 TCA<a class="heading-anchor" href="#8.-a-和-m-怎么知道要遵守-tca" aria-label="链接到本节">#</a></h2>
+<h3 id="8.1-m-的协议由-c-强制注入">8.1 M 的协议由 C 强制注入<a class="heading-anchor" href="#8.1-m-的协议由-c-强制注入" aria-label="链接到本节">#</a></h3>
+<p>M 不需要自己发现 TCA。每次调用都由 C 固定传入：</p>
+<ul>
+<li>M 的角色和禁止事项。</li>
+<li>当前 Claim 与相关活跃 Claim。</li>
+<li>团队 Agreement 和代码事实。</li>
+<li>允许返回的 decision schema。</li>
+</ul>
+<p>M 只能向 C 返回判断建议；C 校验通过后才改变状态。因此 M 的遵从由 TCA 后端控制。</p>
+<h3 id="8.2-a-通过-mcp-获得协议说明">8.2 A 通过 MCP 获得协议说明<a class="heading-anchor" href="#8.2-a-通过-mcp-获得协议说明" aria-label="链接到本节">#</a></h3>
+<p>每个 A 都配置同一个远程 TCA MCP Server。连接时，MCP Server 提供 server instructions 和工具说明，例如：</p>
+<pre><code class="language-text">当 repo 存在 .tca/tca.yaml 时：
+1. 修改代码前创建并 push Claim 分支。
+2. 调用 wait_for_decision 等待 C 返回结果。
+3. 只有 Approved 后才能开始共享修改。
+4. 范围变化时更新 Claim 分支。
+5. 完成时调用 complete_claim。
+</code></pre>
+<p>MCP 暴露的工具保持精简：</p>
+<pre><code class="language-text">wait_for_decision
+get_claim_state
+get_allowed_actions
+heartbeat
+update_progress
+complete_claim
+</code></pre>
+<p>repo 中再保留一条人类可读规则，避免完全依赖不同 MCP Client 对 instructions 的处理：</p>
+<pre><code class="language-text">本项目启用了 TCA。修改代码前先 push Claim 分支，并通过 TCA MCP 等待批准。
+</code></pre>
+<p>这条规则可以写在项目通用说明中，再由接入脚本生成 Codex、Claude Code 或 Cursor 能自动读取的薄适配文件。</p>
+<h3 id="8.3-最终由-git-门禁兜底">8.3 最终由 Git 门禁兜底<a class="heading-anchor" href="#8.3-最终由-git-门禁兜底" aria-label="链接到本节">#</a></h3>
+<p>项目说明和 MCP instructions 用于引导，无法保证第三方 Agent 永不忽略。因此 Git CI/status check 做最终门禁：</p>
+<ul>
+<li>PR 或 commit 必须关联有效 <code>claim_id</code>。</li>
+<li>C 必须确认 Claim 已批准、未过期并属于当前 repo。</li>
+<li>实际 diff 超出 Claim 的路径约束时，要求先 amend 并重新评估。</li>
+<li>检查失败时，受保护分支禁止 merge。</li>
+</ul>
+<p>因此三层职责是：</p>
+<pre><code class="language-text">MCP instructions + repo 规则：让 A 知道流程
+C：让 A 和 M 不能非法改变状态
+Git CI：让绕过流程的代码不能进入共享分支
+</code></pre>
+<h2 id="9.-部署和团队配置">9. 部署和团队配置<a class="heading-anchor" href="#9.-部署和团队配置" aria-label="链接到本节">#</a></h2>
+<h3 id="9.1-tca-server-部署在哪里">9.1 TCA Server 部署在哪里<a class="heading-anchor" href="#9.1-tca-server-部署在哪里" aria-label="链接到本节">#</a></h3>
+<p>TCA Server 部署一次，所有 A 连接同一个地址：</p>
+<pre><code class="language-text">https://tca.example.com
+├── /mcp                  给所有 A 使用
+├── /webhooks/github      接收 GitHub push
+├── /webhooks/gitlab      接收 GitLab push
+└── /health
+</code></pre>
+<p>如果使用 GitHub.com 或 GitLab.com，服务应部署在有 HTTPS 公网地址的云服务器、容器平台或 Git App 后端；如果团队使用内网 GitLab，TCA 也可以部署在同一内网。它不应长期运行在某个成员的个人电脑上。</p>
+<p>第一版可用一个 Docker 容器运行 MCP 接入、webhook、C 和 M 调用逻辑，并使用 SQLite 持久化；正式多团队服务再换成 PostgreSQL 和多实例部署。</p>
+<h3 id="9.2-团队管理员配置一次">9.2 团队管理员配置一次<a class="heading-anchor" href="#9.2-团队管理员配置一次" aria-label="链接到本节">#</a></h3>
+<ol>
+<li>部署或开通一个 TCA 项目，获得项目 ID、MCP 地址和 webhook 地址。</li>
+<li>给 GitHub/GitLab repo 安装 TCA App，或手工配置 push webhook。</li>
+<li>授权 TCA 读取 Claim 分支；若需要写回 <code>decision.yaml</code>，再授予该分支写权限。</li>
+<li>在 repo 中提交 <code>.tca/tca.yaml</code>、Agreement 和项目规则。</li>
+<li>配置 Git CI/status check，阻止无有效 Claim 的 PR 合并。</li>
+</ol>
+<h3 id="9.3-每个成员配置一次">9.3 每个成员配置一次<a class="heading-anchor" href="#9.3-每个成员配置一次" aria-label="链接到本节">#</a></h3>
+<p>每个成员只需要：</p>
+<ol>
+<li>保持原有 Git repo 权限。</li>
+<li>在自己的 coding agent 中添加同一个 TCA MCP 地址。</li>
+<li>使用自己的 TCA token，不能全团队共用 token。</li>
+</ol>
+<pre><code class="language-json">{
+  &quot;mcpServers&quot;: {
+    &quot;tca&quot;: {
+      &quot;type&quot;: &quot;streamable-http&quot;,
+      &quot;url&quot;: &quot;https://tca.example.com/mcp&quot;
+    }
+  }
+}
+</code></pre>
+<p>成员不需要部署服务器，也不需要配置自己的 M。所有 A 连接同一个 TCA Server，C 根据用户、Agent、project_id 和 repo 做隔离与授权。</p>
+<h3 id="9.4-第一版实现范围">9.4 第一版实现范围<a class="heading-anchor" href="#9.4-第一版实现范围" aria-label="链接到本节">#</a></h3>
+<p>第一版只实现一条闭环：</p>
+<ol>
+<li>一个通用 TCA Server，同时提供 webhook 与远程 MCP。</li>
+<li>C 使用普通程序和数据库维护 Agent session、Claim、decision 与状态机。</li>
+<li>A 通过 Git Claim 分支发布意图，webhook 触发 C 评估。</li>
+<li>C 调用通用 M 判断冲突和依赖。</li>
+<li>C 把 decision 写回 Git，A 通过 MCP 查询状态并汇报进度。</li>
+<li>范围变化再次 push Claim 分支；完成时通过 MCP 报告。</li>
+<li>Git CI 阻止未批准或范围不符的修改合并。</li>
+</ol>
+<p>第一版先支持一个 Git 平台 Adapter；暂时不做跨 repo 协调、复杂自动合并、企业权限后台和自动主持多人会议。</p>
+<h2 id="10.-还需要继续决定的事情">10. 还需要继续决定的事情<a class="heading-anchor" href="#10.-还需要继续决定的事情" aria-label="链接到本节">#</a></h2>
+<ul>
+<li>TCA 服务部署在团队内网、云服务器，还是 Git 平台 App 后端。</li>
+<li>Git 门禁只限制 merge，还是也限制 push。建议第一版只限制受保护分支的 merge。</li>
+<li>谁可以代表 P 或 Owner 作决定和 override。</li>
+<li>Agreement 谁能修改、何时生效。</li>
+<li>TCA、M 或 Git 断线时是否全部暂停。建议第一版默认暂停新的放行操作。</li>
+<li>M 可以读取多少代码和团队文档，敏感项目如何隔离。</li>
+</ul>
+</main>
+  </div>
+  <a class="top" href="#top" aria-label="返回顶部">↑</a>
+  <script>
+    document.querySelectorAll('table').forEach(function(table) { var wrap=document.createElement('div');wrap.className='table-wrap';table.parentNode.insertBefore(wrap,table);wrap.appendChild(table); });
+    document.querySelectorAll('a[href^="http"]').forEach(function(a) { a.target='_blank';a.rel='noopener noreferrer'; });
+  </script>
+  <script>
+    window.addEventListener('load', function () {
+      import('https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs')
+        .then(function (module) {
+          module.default.initialize({
+            startOnLoad: false,
+            securityLevel: 'strict',
+            theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default'
+          });
+          return module.default.run({ querySelector: '.mermaid' });
+        })
+        .catch(function () {
+          document.documentElement.classList.add('mermaid-offline');
+        });
+    });
+  </script>
+</body>
+</html>
