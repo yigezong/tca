@@ -12,7 +12,7 @@ claim:
   decision_file: .tca/decision.yaml
 
 mcp:
-  url: pending-vercel-deployment
+  url: https://tca-ten.vercel.app/mcp
   auth: bearer-token
   token_env: TCA_API_TOKEN
 

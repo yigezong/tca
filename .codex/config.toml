@@ -1,2 +1,3 @@
-# TCA MCP 将在首次 Vercel 部署生成域名后写入。
-# 不在仓库中保存 TCA_API_TOKEN。
+[mcp_servers.tca]
+url = "https://tca-ten.vercel.app/mcp"
+bearer_token_env_var = "TCA_API_TOKEN"
