@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "team-code-agent"
+version = "0.1.0"
+description = "Git-first coordination service for coding agents"
+requires-python = ">=3.12"
+dependencies = ["PyYAML>=6.0", "mcp>=1.27,<2"]
+
+[project.scripts]
+tca-server = "tca.server:main"
+tca-mcp = "tca.mcp_server:main"
+tca-app = "tca.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
