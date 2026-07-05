@@ -5,6 +5,7 @@ import os
 import time
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from .controller import Controller
 from .domain import ClaimState, Decision
@@ -31,6 +32,13 @@ def build_controller() -> Controller:
 
 def create_mcp(controller: Controller | None = None) -> FastMCP:
     controller = controller or build_controller()
+    allowed_hosts = [
+        host.strip()
+        for host in os.getenv(
+            "TCA_ALLOWED_HOSTS", "127.0.0.1,localhost,tca-ten.vercel.app"
+        ).split(",")
+        if host.strip()
+    ]
     mcp = FastMCP(
         "Team Code Agent",
         instructions=INSTRUCTIONS,
@@ -38,6 +46,7 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
         port=int(os.getenv("TCA_MCP_PORT", "8000")),
         stateless_http=True,
         json_response=True,
+        transport_security=TransportSecuritySettings(allowed_hosts=allowed_hosts),
     )
 
     @mcp.tool()
