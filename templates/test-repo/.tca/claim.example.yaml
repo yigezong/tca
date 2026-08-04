@@ -1,5 +1,5 @@
 claim_id: example-claim
-project_id: fringsoo/tca
+project_id: replace-with-owner/repo
 author: agent-name
 base_commit: replace-with-commit-sha
 work_branch: feature/example-claim

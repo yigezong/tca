@@ -1,5 +1,5 @@
 version: 1
-project_id: fringsoo/tca
+project_id: replace-with-owner/repo
 
 git:
   transport: github
@@ -9,13 +9,11 @@ git:
 claim:
   branch_prefix: tca/claim/
   file: .tca/claim.yaml
-  decision_file: .tca/decision.yaml
 
 mcp:
-  url: https://tca-ten.vercel.app/mcp
+  url: https://replace-with-tca-server.example.com/mcp
   auth: bearer-token
   token_env: TCA_API_TOKEN
 
 coordination:
-  mode: external
   agreements_dir: .tca/agreements

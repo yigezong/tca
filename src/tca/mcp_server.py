@@ -22,11 +22,9 @@ The Controller is authoritative; A and M must not infer state from local memory.
 
 
 def build_controller() -> Controller:
-    coordination_mode = os.getenv("TCA_COORDINATION_MODE", "rules")
     return Controller(
         build_store(),
         BasicRuleChecker(),
-        require_external_coordination=coordination_mode == "external",
     )
 
 

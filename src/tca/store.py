@@ -266,7 +266,7 @@ class ClaimStore:
 
 
 def build_store():
-    """Use Neon/Postgres when DATABASE_URL is set, otherwise local SQLite."""
+    """Use Postgres when DATABASE_URL is set, otherwise local SQLite."""
     import os
 
     database_url = os.getenv("DATABASE_URL", "").strip()

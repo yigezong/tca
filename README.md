@@ -1,79 +1,43 @@
 # Team Code Agent
 
-Team Code Agent（TCA）是一个 Git-first 的多 Agent 协作控制服务：GitHub 发布 Claim，Vercel 承载 MCP/Webhook/C，Neon Postgres 保存权威状态。
+Team Code Agent（TCA）是一个 Git-first 的多 Agent 协作控制服务。它让多个 coding agent 在同一个项目里工作时，先发布意图、协调边界，再执行代码修改。
 
-## 目标结构
+当前阶段先不使用 TCA 开发 TCA 本体；TCA 本体按普通 Git 流程开发。TCA 协议优先用于另一个“被测 repo”，等系统稳定后再考虑自举。
+
+因此本仓库根目录不保留 `.tca/` 或 `.codex/` MCP 活配置；这些文件只应出现在被测 repo 中。被测 repo 接入样例见 [templates/test-repo](templates/test-repo)。
+
+## 当前核心
 
 ```text
-A1（本机 proj_tca） ──MCP──┐
-M （本机 proj_tca_m）──MCP──┼── Vercel TCA / C ── Neon Postgres
-A2（同事的 clone）   ──MCP──┘          ▲
-                                       │ GitHub Webhook
-GitHub fringsoo/tca ───────────────────┘
+A / M Agent ── MCP ──┐
+                     ▼
+Git provider ─ webhook ─► TCA Server / C ─► 状态数据库
+                     ▲
+                     └── 读取远端 Claim 分支
 ```
 
-TCA 不包含 M。A 与 M 都是外部 Agent，通过 C 获取状态和允许操作。
-
-## 当前能力
-
-- GitHub Claim 分支 Webhook 与 HMAC 校验；
-- C 的确定性状态机、权限和审计；
-- SQLite 本地开发后端；
-- Neon/Postgres 公网持久化后端；
-- A 的状态、等待、执行、心跳、进度和完成 MCP tools；
-- M 的领取协调任务和提交建议 MCP tools；
-- Vercel ASGI/Fluid Compute 入口；
-- MCP 和 Claim API 的 Bearer Token 鉴权；
-- 可选的本地 bare Git hook 接入，默认关闭。
+- Git provider 保存代码、Claim 分支和团队约定；当前已实现 GitHub adapter。
+- TCA Server 运行 C（Controller）、MCP 接口和 webhook。
+- 状态数据库保存 Claim 状态机和审计记录；当前本地用 SQLite，部署用 Postgres。
+- A 是开发 Agent，M 是外部协调 Agent；二者都通过 MCP 和 C 交互。
 
 ## 本地开发
 
-未设置 `DATABASE_URL` 时自动使用 SQLite：
-
 ```bash
 uv sync
-uv run pytest
+uv run python -m pytest
 uv run tca-app
 ```
 
-设置 `DATABASE_URL` 时自动使用 Postgres。
+未设置 `DATABASE_URL` 时使用本地 SQLite；设置后使用 Postgres。
 
-## Vercel + Neon 部署
+## 部署
 
-1. 在 Vercel 导入 GitHub 仓库 `fringsoo/tca`。
-2. 在项目 Storage/Marketplace 中添加 Neon Postgres，确认产生 `DATABASE_URL`。
-3. 在 Vercel Production 环境配置：
+当前已验证的托管组合：Vercel + Neon/Postgres + GitHub webhook。后续可以替换成自托管 ASGI 服务、自己的 Postgres 和其他 Git provider adapter。
 
-```text
-TCA_API_TOKEN=<openssl rand -hex 32>
-TCA_COORDINATION_MODE=external
-GITHUB_WEBHOOK_SECRET=<openssl rand -hex 32>
-GITHUB_TOKEN=<fine-grained GitHub token>
-TCA_CLAIM_BRANCH_PREFIX=tca/claim/
-TCA_PUBLISH_GIT_DECISIONS=0
-```
+必需环境变量见 [docs/tca-guide.md](docs/tca-guide.md)。
 
-`GITHUB_TOKEN` 对私有仓库至少需要 Metadata read 和 Contents read。V1 默认不向 Claim 分支写回 Decision，A 通过 MCP 获取权威状态。
+## 主要文档
 
-4. 部署后验证：
-
-```bash
-curl https://<vercel-domain>/health
-```
-
-5. GitHub 仓库 Settings → Webhooks：
-
-```text
-Payload URL: https://<vercel-domain>/webhooks/github
-Content type: application/json
-Secret: 与 GITHUB_WEBHOOK_SECRET 相同
-Event: Push events
-```
-
-6. 将实际 MCP URL 写入 `.tca/project.yaml` 和 `.codex/config.toml`，团队成员 pull 后即可连接；Token 只通过个人环境变量 `TCA_API_TOKEN` 提供。
-
-## 安全边界
-
-`/health` 和签名 Webhook 可公开访问；`/mcp` 与 `/api/claims/*` 需要 Bearer Token。当前 V1 面向受信任小团队，A/M 暂时共享服务 Token；角色级 Token 是后续增强项。
-
-新成员请先阅读 [`docs/online-team-onboarding.md`](docs/online-team-onboarding.md)，其中包含实现原理、部署配置和自举开发流程。完整协议见 [`.tca/protocol.md`](.tca/protocol.md)，产品模型见 [`docs/ideas/project-idea.md`](docs/ideas/project-idea.md)。
+- [docs/tca-guide.md](docs/tca-guide.md)：实现原理、文件地图、部署配置、被测 repo 接入方式。
+- [templates/test-repo](templates/test-repo)：被测 repo 的最小接入模板，包含 `AGENTS.md` 和 `.tca/` 协议配置。

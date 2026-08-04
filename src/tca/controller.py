@@ -19,12 +19,9 @@ class Controller:
         self,
         store: Store,
         rule_checker: BasicRuleChecker,
-        *,
-        require_external_coordination: bool = False,
     ) -> None:
         self.store = store
         self.rule_checker = rule_checker
-        self.require_external_coordination = require_external_coordination
 
     def submit_claim(self, claim: Claim) -> ClaimRecord:
         self.store.save_received(claim)
@@ -129,19 +126,8 @@ class Controller:
                 hard_decision.state,
                 decision=hard_decision,
             )
-        if self.require_external_coordination:
-            self.store.queue_coordination(claim.claim_id)
-            return self.store.get(claim.claim_id)
-        decision = Decision(
-            state=ClaimState.APPROVED,
-            reason="basic rules found no active dependency or path conflict",
-        )
-        return self.store.transition(
-            claim.claim_id,
-            {ClaimState.ASSESSING},
-            decision.state,
-            decision=decision,
-        )
+        self.store.queue_coordination(claim.claim_id)
+        return self.store.get(claim.claim_id)
 
     def _reevaluate_waiters(self, completed: ClaimRecord) -> None:
         active = self.store.list_active(

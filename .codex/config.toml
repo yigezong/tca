@@ -1,3 +1,0 @@
-[mcp_servers.tca]
-url = "https://tca-ten.vercel.app/mcp"
-bearer_token_env_var = "TCA_API_TOKEN"

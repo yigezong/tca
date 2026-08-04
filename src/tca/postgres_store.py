@@ -15,7 +15,7 @@ def _now() -> str:
 
 
 class PostgresClaimStore:
-    """Transaction-backed Claim store for Neon and other PostgreSQL services."""
+    """Transaction-backed Claim store for PostgreSQL-compatible services."""
 
     def __init__(self, database_url: str) -> None:
         self.database_url = database_url

@@ -11,8 +11,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 
 from .controller import Controller
-from .github import GitHubContentLoader, GitHubDecisionPublisher, GitHubWebhookHandler
-from .local_git import LocalGitWebhookHandler
+from .github import GitHubContentLoader, GitHubWebhookHandler
 from .mcp_server import create_mcp
 from .rules import BasicRuleChecker
 from .store import build_store
@@ -44,14 +43,10 @@ class BearerAuthMiddleware:
         await self.app(scope, receive, send)
 
 
-def build_components() -> tuple[
-    Controller, GitHubWebhookHandler | None, LocalGitWebhookHandler | None
-]:
+def build_components() -> tuple[Controller, GitHubWebhookHandler | None]:
     controller = Controller(
         build_store(),
         BasicRuleChecker(),
-        require_external_coordination=os.getenv("TCA_COORDINATION_MODE", "rules")
-        == "external",
     )
     branch_prefix = os.getenv("TCA_CLAIM_BRANCH_PREFIX", "tca/claim/")
 
@@ -65,38 +60,22 @@ def build_components() -> tuple[
             claim_path=os.getenv("TCA_CLAIM_PATH", ".tca/claim.yaml"),
             api_url=api_url,
         )
-        publisher = None
-        if os.getenv("TCA_PUBLISH_GIT_DECISIONS", "0") == "1":
-            publisher = GitHubDecisionPublisher(
-                token=github_token,
-                decision_path=os.getenv("TCA_DECISION_PATH", ".tca/decision.yaml"),
-                api_url=api_url,
-            )
         github = GitHubWebhookHandler(
             controller=controller,
             loader=loader,
             secret=github_secret,
-            publisher=publisher,
             branch_prefix=branch_prefix,
         )
 
-    local_git = None
-    local_secret = os.getenv("TCA_WEBHOOK_SECRET", "")
-    if local_secret:
-        local_git = LocalGitWebhookHandler(
-            controller=controller,
-            secret=local_secret,
-            branch_prefix=branch_prefix,
-        )
-    return controller, github, local_git
+    return controller, github
 
 
 def create_app():
     token = os.getenv("TCA_API_TOKEN", "")
-    if os.getenv("VERCEL") and not token:
-        raise RuntimeError("TCA_API_TOKEN is required on Vercel")
+    if not token:
+        raise RuntimeError("TCA_API_TOKEN is required")
 
-    controller, github, local_git = build_components()
+    controller, github = build_components()
     mcp = create_mcp(controller)
 
     async def health(request: Request) -> JSONResponse:
@@ -127,25 +106,6 @@ def create_app():
         except ValueError as error:
             return JSONResponse({"error": str(error)}, status_code=400)
 
-    async def local_git_webhook(request: Request) -> JSONResponse:
-        if local_git is None:
-            return JSONResponse({"error": "local Git webhook is disabled"}, status_code=404)
-        try:
-            record = local_git.handle(
-                await request.body(),
-                request.headers.get("x-tca-signature"),
-                request.headers.get("x-tca-repository"),
-                request.headers.get("x-tca-ref"),
-            )
-            return JSONResponse(
-                {"accepted": record is not None, "claim": record.to_mapping() if record else None},
-                status_code=202,
-            )
-        except PermissionError as error:
-            return JSONResponse({"error": str(error)}, status_code=401)
-        except ValueError as error:
-            return JSONResponse({"error": str(error)}, status_code=400)
-
     @contextlib.asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
         async with mcp.session_manager.run():
@@ -156,7 +116,6 @@ def create_app():
             Route("/health", health),
             Route("/api/claims/{claim_id}", get_claim),
             Route("/webhooks/github", github_webhook, methods=["POST"]),
-            Route("/webhooks/git", local_git_webhook, methods=["POST"]),
             Mount("/", app=mcp.streamable_http_app()),
         ],
         lifespan=lifespan,

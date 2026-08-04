@@ -11,14 +11,6 @@ from tca.rules import BasicRuleChecker
 from tca.store import ClaimStore
 
 
-class FakePublisher:
-    def __init__(self) -> None:
-        self.calls = []
-
-    def publish(self, repository, branch, record) -> None:
-        self.calls.append((repository, branch, record.state))
-
-
 class FakeLoader:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
@@ -39,15 +31,14 @@ def signed(secret: str, body: bytes) -> str:
     return f"sha256={digest}"
 
 
-def make_handler(loader: FakeLoader, publisher=None) -> GitHubWebhookHandler:
+def make_handler(loader: FakeLoader) -> GitHubWebhookHandler:
     controller = Controller(ClaimStore(), BasicRuleChecker())
-    return GitHubWebhookHandler(controller, loader, "webhook-secret", publisher)
+    return GitHubWebhookHandler(controller, loader, "webhook-secret")
 
 
 def test_github_push_loads_claim_branch_and_submits_to_controller() -> None:
     loader = FakeLoader()
-    publisher = FakePublisher()
-    handler = make_handler(loader, publisher)
+    handler = make_handler(loader)
     body = json.dumps(
         {
             "ref": "refs/heads/tca/claim/claim-42",
@@ -60,11 +51,8 @@ def test_github_push_loads_claim_branch_and_submits_to_controller() -> None:
     assert record is not None
     assert record.claim.claim_id == "claim-42"
     assert record.claim.project_id == "team/project"
-    assert record.state is ClaimState.APPROVED
+    assert record.state is ClaimState.ASSESSING
     assert loader.calls == [("team/project", "tca/claim/claim-42")]
-    assert publisher.calls == [
-        ("team/project", "tca/claim/claim-42", ClaimState.APPROVED)
-    ]
 
 
 def test_invalid_signature_is_rejected() -> None:
