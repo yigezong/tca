@@ -1,25 +1,22 @@
 # Team Code Agent
 
-Team Code Agent（TCA）是一个 Git-first 的多 Agent 协作控制服务。它让多个 coding agent 在同一个项目里工作时，先发布意图、协调边界，再执行代码修改。
+Team Code Agent（TCA）是一个 Git-first 的多 Agent 协作控制服务。它提供一个共享的 TCA Server，让开发 Agent 在修改共享代码前先发布 Claim、等待协调决策，再执行代码修改。
 
-当前阶段先不使用 TCA 开发 TCA 本体；TCA 本体按普通 Git 流程开发。TCA 协议优先用于另一个“被测 repo”，等系统稳定后再考虑自举。
+本仓库是 **TCA Server 源码仓库**，不是被 TCA 管理的被测 repo。根目录不保存 `.tca/` 或 `.codex/` 活配置。
 
-因此本仓库根目录不保留 `.tca/` 或 `.codex/` MCP 活配置；这些文件只应出现在被测 repo 中。被测 repo 接入样例见 [templates/test-repo](templates/test-repo)。
-
-## 当前核心
+## 架构
 
 ```text
 A / M Agent ── MCP ──┐
                      ▼
 Git provider ─ webhook ─► TCA Server / C ─► 状态数据库
-                     ▲
-                     └── 读取远端 Claim 分支
 ```
 
-- Git provider 保存代码、Claim 分支和团队约定；当前已实现 GitHub adapter。
-- TCA Server 运行 C（Controller）、MCP 接口和 webhook。
-- 状态数据库保存 Claim 状态机和审计记录；当前本地用 SQLite，部署用 Postgres。
-- A 是开发 Agent，M 是外部协调 Agent；二者都通过 MCP 和 C 交互。
+- C 是确定性 Controller，维护 Claim 状态机和允许动作。
+- A 是开发 Agent，通过 MCP 查询状态、汇报进度和完成任务。
+- M 是外部协调 Agent，通过 MCP 领取 Claim 并提交协调建议。
+- Git provider 保存 Claim 分支和 Claim 文件；当前代码包含 GitHub adapter。
+- 状态数据库本地可用 SQLite，部署使用 Postgres。
 
 ## 本地开发
 
@@ -29,16 +26,29 @@ uv run python -m pytest
 uv run tca-app
 ```
 
-未设置 `DATABASE_URL` 时使用本地 SQLite；设置后使用 Postgres。
+## Vercel 部署
 
-## 部署
+Vercel 只需要把本仓库部署成 TCA Server。`fringsoo/tca` 自己不配置指向 `/webhooks/github` 的 webhook。
 
-当前已验证的托管组合：Vercel + Neon/Postgres。GitHub webhook 只给独立被测 repo 使用，不给 TCA 本体仓库自举使用。后续可以替换成自托管 ASGI 服务、自己的 Postgres 和其他 Git provider adapter。
+必需环境变量：
 
-TCA Server 本体的部署配置见 [docs/server-deployment.md](docs/server-deployment.md)。
+```bash
+TCA_API_TOKEN=...
+DATABASE_URL=...
+TCA_ALLOWED_HOSTS=...
+```
 
-## 主要文档
+- `TCA_API_TOKEN`：A/M 调用 `/mcp` 和 `/api` 的 Bearer token。
+- `DATABASE_URL`：线上 Postgres 连接串。
+- `TCA_ALLOWED_HOSTS`：允许访问 MCP 的主机名，不带 `https://`，例如 `tca-ten.vercel.app`。
 
-- [docs/tca-guide.md](docs/tca-guide.md)：实现原理、文件地图、部署配置、被测 repo 接入方式。
-- [docs/server-deployment.md](docs/server-deployment.md)：只讲 `fringsoo/tca` 作为 TCA Server 的 Vercel/环境变量配置。
-- [templates/test-repo](templates/test-repo)：被测 repo 的最小接入模板，包含 `AGENTS.md` 和 `.tca/` 协议配置。
+部署后用 `/health` 验证服务：
+
+```bash
+curl https://<tca-server-host>/health
+```
+
+## 文档
+
+- [docs/tca-guide.md](docs/tca-guide.md)：当前架构、配置和文件地图。
+- [templates/test-repo](templates/test-repo)：被测 repo 的最小接入模板。
