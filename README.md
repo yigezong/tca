@@ -33,11 +33,12 @@ uv run tca-app
 
 ## 部署
 
-当前已验证的托管组合：Vercel + Neon/Postgres + GitHub webhook。后续可以替换成自托管 ASGI 服务、自己的 Postgres 和其他 Git provider adapter。
+当前已验证的托管组合：Vercel + Neon/Postgres。GitHub webhook 只给独立被测 repo 使用，不给 TCA 本体仓库自举使用。后续可以替换成自托管 ASGI 服务、自己的 Postgres 和其他 Git provider adapter。
 
-必需环境变量见 [docs/tca-guide.md](docs/tca-guide.md)。
+TCA Server 本体的部署配置见 [docs/server-deployment.md](docs/server-deployment.md)。
 
 ## 主要文档
 
 - [docs/tca-guide.md](docs/tca-guide.md)：实现原理、文件地图、部署配置、被测 repo 接入方式。
+- [docs/server-deployment.md](docs/server-deployment.md)：只讲 `fringsoo/tca` 作为 TCA Server 的 Vercel/环境变量配置。
 - [templates/test-repo](templates/test-repo)：被测 repo 的最小接入模板，包含 `AGENTS.md` 和 `.tca/` 协议配置。

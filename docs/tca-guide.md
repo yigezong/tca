@@ -311,11 +311,11 @@ flowchart LR
 | `TCA_DATABASE` | 本地 `.env` 可选 | TCA Server 本地开发 | SQLite 文件路径，默认 `tca.db` | 否 |
 | `TCA_API_TOKEN` | Server env + A/M 本机环境 | Server 和 A/M | A/M 调 `/mcp`、`/api` 时的 Bearer token；Server 用同一个值校验 | 是 |
 | `TCA_CLAIM_BRANCH_PREFIX` | Server env 可选；`.tca/project.yaml` 公开记录 | TCA Server | 只处理这个前缀的分支，例如 `tca/claim/`；默认就是 `tca/claim/` | 否 |
-| `GITHUB_WEBHOOK_SECRET` | Server env + GitHub webhook 设置 | TCA Server 和 GitHub | 当前 GitHub adapter 使用：GitHub 发 webhook 时用它签名，TCA 用它验签 | 是 |
-| `GITHUB_TOKEN` | Server env；本地 `.env` 可选 | TCA Server | 当前 GitHub adapter 使用：从 GitHub 读取 `.tca/claim.yaml` | 是 |
+| `GITHUB_WEBHOOK_SECRET` | Server env + 被测 repo 的 GitHub webhook 设置 | TCA Server 和 GitHub | 启用 GitHub adapter 时使用：GitHub 发 webhook 时用它签名，TCA 用它验签 | 是 |
+| `GITHUB_TOKEN` | Server env；本地 `.env` 可选 | TCA Server | 启用 GitHub adapter 时使用：从被测 repo 读取 `.tca/claim.yaml` | 是 |
 | `GITHUB_API_URL` | Server env 可选 | TCA Server | 当前 GitHub adapter 使用：GitHub API 地址，默认 `https://api.github.com` | 否 |
 | `TCA_CLAIM_PATH` | Server env 可选 | TCA Server | Claim 文件路径，默认 `.tca/claim.yaml` | 否 |
-| `TCA_ALLOWED_HOSTS` | Server env 可选 | MCP Server | MCP transport security 的允许 host 列表 | 否 |
+| `TCA_ALLOWED_HOSTS` | Server env；部署 MCP 时应设置 | MCP Server | MCP transport security 的允许 host 列表；填实际访问域名，不含 `https://` | 否 |
 | `TCA_HOST` / `TCA_PORT` / `TCA_MCP_PORT` | 本地运行可选 | TCA Server | 本地监听地址和端口；托管 ASGI 部署通常不需要手动设置 | 否 |
 
 ### 6.2 三把容易混的钥匙
@@ -323,8 +323,8 @@ flowchart LR
 | 名称 | 谁拿着 | 用在哪条链路 | 类比 |
 |---|---|---|---|
 | `TCA_API_TOKEN` | Server env + A/M 本机 | A/M → TCA `/mcp` 和 `/api` | Agent 进 TCA 前台的门禁卡 |
-| `GITHUB_WEBHOOK_SECRET` | Server env + GitHub webhook 设置 | GitHub → TCA `/webhooks/github` | GitHub 敲门时的暗号 |
-| `GITHUB_TOKEN` | Server env | TCA → GitHub API | TCA 去 GitHub 读 Claim 文件的钥匙 |
+| `GITHUB_WEBHOOK_SECRET` | Server env + 被测 repo 的 GitHub webhook 设置 | 被测 repo 的 GitHub → TCA `/webhooks/github` | GitHub 敲门时的暗号 |
+| `GITHUB_TOKEN` | Server env | TCA → 被测 repo 的 GitHub API | TCA 去 GitHub 读 Claim 文件的钥匙 |
 
 这三者不能互换。
 
@@ -335,35 +335,45 @@ flowchart LR
 从用户心智上，TCA 接入应该只有三件事：
 
 ```text
-Server：部署 TCA，并给它数据库和 Git 访问钥匙
+Server：部署 TCA，并给它数据库；接被测 repo 时再给 Git 访问钥匙
 Repo：提交 .tca/project.yaml，说明 Claim 和 MCP 地址
 Agent：配置 MCP，并在本机提供 TCA_API_TOKEN
 ```
 
 不应该要求普通成员理解 Vercel、Neon 或某个 Git 平台的细节。那些只是当前部署和 adapter 的实现选择。
 
+如果现在只整理 TCA Server 本体，先看更短的部署说明：[server-deployment.md](server-deployment.md)。这里继续保留完整模型，方便之后接被测 repo。
+
 ### 7.2 TCA Server
 
-必需环境变量：
+TCA 本体仓库 `fringsoo/tca` 是 Server 源码仓库，不是被测 repo。它可以通过 Vercel Git integration 自动部署，但不应该在自己的 GitHub Webhooks 里配置 `/webhooks/github`。
+
+先把 Server 跑起来时，Vercel 里最少配：
 
 ```bash
-DATABASE_URL=...
 TCA_API_TOKEN=...
-GITHUB_WEBHOOK_SECRET=...
-GITHUB_TOKEN=...
+DATABASE_URL=...
+TCA_ALLOWED_HOSTS=...
 ```
 
-可选环境变量：
+说明：
+
+- `TCA_API_TOKEN` 是 A/M 调 `/mcp` 和 `/api` 的 Bearer token。当前 V1 是单服务共享 token。
+- `DATABASE_URL` 是线上状态库。Vercel 上应该用 Postgres；本地开发可以不设，自动使用 SQLite。
+- `TCA_ALLOWED_HOSTS` 是 MCP transport security 的允许 Host，填实际访问域名，例如 `tca-ten.vercel.app` 或自定义域名。
+
+等有独立被测 repo 要接入时，再启用 GitHub adapter：
 
 ```bash
+GITHUB_WEBHOOK_SECRET=...
+GITHUB_TOKEN=...
 TCA_CLAIM_BRANCH_PREFIX=tca/claim/
 TCA_CLAIM_PATH=.tca/claim.yaml
 GITHUB_API_URL=https://api.github.com
 ```
 
-说明：
-
-- `DATABASE_URL` 是状态库接口。当前实现支持 Postgres；本地开发可以不设，自动使用 SQLite。
+- `GITHUB_WEBHOOK_SECRET` 是被测 repo webhook 的签名 secret。TCA 本体仓库不需要这个 webhook。
+- `GITHUB_TOKEN` 是 TCA Server 去 GitHub 读取被测 repo `.tca/claim.yaml` 的 token，不是 Vercel 部署源码用的 token。
 - `GITHUB_*` 是当前 GitHub adapter 的配置。未来如果换成 GitLab、自托管 Git 服务或自定义 Git server，应该替换成对应 adapter 的配置，而不是让 TCA 协议变成 GitHub 专用协议。
 - `TCA_CLAIM_BRANCH_PREFIX` 有默认值，除非团队想换分支命名，否则不用配。
 - 不再有 `TCA_COORDINATION_MODE`。TCA 的默认前提就是：M 是外部协调 Agent，C 总是把需要语义判断的 Claim 排队给 M。
