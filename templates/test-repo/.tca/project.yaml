@@ -1,16 +1,6 @@
 version: 1
 project_id: replace-with-owner/repo
 
-git:
-  transport: github
-  remote_name: origin
-  webhook_path: /webhooks/github
-
-claim:
-  branch_prefix: tca/claim/
-  file: .tca/claim.yaml
-
 mcp:
   url: https://replace-with-tca-server.example.com/mcp
-  auth: bearer-token
   token_env: TCA_API_TOKEN

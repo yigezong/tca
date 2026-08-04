@@ -2,9 +2,9 @@
 
 ## 角色
 
-- **A（开发 Agent）**：提出 Claim、执行代码修改并汇报进度。
+- **A（开发 Agent）**：提出 Claim、获批后执行代码修改，并在完成时通知 C。
 - **M（协调 Agent）**：从 C 获取待协调任务，理解语义冲突并提交建议。
-- **C（协议控制器）**：运行在 TCA Server 中，维护状态机、校验操作并保存审计记录。
+- **C（协议控制器）**：运行在 TCA Server 中，维护状态机、校验操作并保存 Claim 状态和协调队列。
 - **P（人）**：提出目标；在目标或权限无法自动裁决时作出决定。
 
 A 和 M 都是 TCA Server 之外的客户端，都通过 MCP 与 C 交互。
@@ -15,7 +15,7 @@ A 和 M 都是 TCA Server 之外的客户端，都通过 MCP 与 C 交互。
 2. 在该分支提交 `.tca/claim.yaml`，说明目标、工作分支、预计路径和依赖。
 3. Push Claim 分支；Git provider webhook 调用 `/webhooks/github` 通知 C。
 4. 调用 `wait_for_decision`。只有 `allowed_actions` 包含 `start_execution` 时才能开始。
-5. 范围变化时停止越界修改并更新 Claim；完成后调用 `complete_claim`。
+5. 范围变化时停止越界修改，并通过 Claim 分支提交新版 `.tca/claim.yaml`；完成后调用 `complete_claim`。
 
 ## M 的最短流程
 

@@ -40,7 +40,7 @@ TCA_ALLOWED_HOSTS=...
 
 - `TCA_API_TOKEN`：A/M 调用 `/mcp` 和 `/api` 的 Bearer token。
 - `DATABASE_URL`：线上 Postgres 连接串。
-- `TCA_ALLOWED_HOSTS`：允许访问 MCP 的主机名，不带 `https://`，例如 `tca.example.com`。
+- `TCA_ALLOWED_HOSTS`：`/mcp` 的 Host header 白名单，填 TCA Server 域名，不带 `https://`，例如 `tca.example.com`。
 
 部署后用 `/health` 验证服务：
 

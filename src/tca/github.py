@@ -14,6 +14,10 @@ import yaml
 from .controller import Controller
 from .domain import Claim
 
+CLAIM_BRANCH_PREFIX = "tca/claim/"
+CLAIM_FILE_PATH = ".tca/claim.yaml"
+GITHUB_CONTENTS_API_URL = "https://api.github.com"
+
 
 class ClaimLoader(Protocol):
     def load(self, repository: str, branch: str) -> dict[str, Any]: ...
@@ -22,15 +26,13 @@ class ClaimLoader(Protocol):
 @dataclass(slots=True)
 class GitHubContentLoader:
     token: str
-    claim_path: str = ".tca/claim.yaml"
-    api_url: str = "https://api.github.com"
 
     def load(self, repository: str, branch: str) -> dict[str, Any]:
         encoded_repo = urllib.parse.quote(repository, safe="/")
-        encoded_path = urllib.parse.quote(self.claim_path, safe="/")
+        encoded_path = urllib.parse.quote(CLAIM_FILE_PATH, safe="/")
         encoded_branch = urllib.parse.quote(branch, safe="")
         url = (
-            f"{self.api_url}/repos/{encoded_repo}/contents/{encoded_path}"
+            f"{GITHUB_CONTENTS_API_URL}/repos/{encoded_repo}/contents/{encoded_path}"
             f"?ref={encoded_branch}"
         )
         headers = {
@@ -51,6 +53,7 @@ class GitHubContentLoader:
             raise ValueError("claim file must contain a YAML object")
         return value
 
+
 def verify_github_signature(secret: str, body: bytes, signature: str | None) -> bool:
     if not secret or not signature or not signature.startswith("sha256="):
         return False
@@ -63,7 +66,6 @@ class GitHubWebhookHandler:
     controller: Controller
     loader: ClaimLoader
     secret: str
-    branch_prefix: str = "tca/claim/"
 
     def handle(
         self, body: bytes, signature: str | None, event: str | None
@@ -78,13 +80,13 @@ class GitHubWebhookHandler:
         if not ref.startswith(heads_prefix):
             return None
         branch = ref.removeprefix(heads_prefix)
-        if not branch.startswith(self.branch_prefix):
+        if not branch.startswith(CLAIM_BRANCH_PREFIX):
             return None
         repository = str(payload.get("repository", {}).get("full_name", ""))
         if not repository:
             raise ValueError("GitHub webhook is missing repository.full_name")
         value = self.loader.load(repository, branch)
-        claim_id = branch.removeprefix(self.branch_prefix)
+        claim_id = branch.removeprefix(CLAIM_BRANCH_PREFIX)
         value.setdefault("claim_id", claim_id)
         value.setdefault("project_id", repository)
         if value["claim_id"] != claim_id:

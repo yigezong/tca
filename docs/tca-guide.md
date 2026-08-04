@@ -118,7 +118,7 @@ sequenceDiagram
 ```mermaid
 flowchart LR
     subgraph TestedRepo["被测 repo：可提交到 Git"]
-      Project[".tca/project.yaml<br/>公开：project_id、claim.branch_prefix、mcp.url、token_env"]
+      Project[".tca/project.yaml<br/>公开：project_id、mcp.url、token_env"]
       Claim["tca/claim/* 分支<br/>.tca/claim.yaml"]
       AgentCfg["可选 Agent 适配配置<br/>例如 Codex MCP URL + bearer_token_env_var"]
     end
@@ -136,11 +136,9 @@ flowchart LR
     subgraph Server["TCA Server 部署环境变量"]
       ApiToken["TCA_API_TOKEN<br/>校验 A/M 的 MCP/API 请求"]
       DbUrl["DATABASE_URL<br/>连接 SQL 状态库"]
-      Hosts["TCA_ALLOWED_HOSTS<br/>限制 MCP Host"]
+      Hosts["TCA_ALLOWED_HOSTS<br/>/mcp Host header 白名单"]
       GhSecret["GITHUB_WEBHOOK_SECRET<br/>可选：启用 GitHub webhook"]
       GhToken["GITHUB_TOKEN<br/>可选：读取私有被测 repo Claim"]
-      Prefix["TCA_CLAIM_BRANCH_PREFIX<br/>可选：默认 tca/claim/"]
-      Path["TCA_CLAIM_PATH<br/>可选：默认 .tca/claim.yaml"]
       App["TCA App<br/>/mcp + /api + /webhooks/github"]
     end
 
@@ -155,8 +153,7 @@ flowchart LR
     WebhookSecret -->|"签名请求"| Webhook
     Webhook -->|"POST + x-hub-signature-256"| App
     GhSecret -->|"验签"| App
-    Prefix -->|"过滤 Claim 分支"| App
-    Path -->|"定位 Claim 文件"| App
+    Claim -->|"固定规则：tca/claim/* + .tca/claim.yaml"| App
     GhToken -->|"GitHub Contents API"| App
     DbUrl -->|"读写 Claim 状态"| App
 ```
@@ -167,12 +164,9 @@ flowchart LR
 |---|---|---|---|
 | `TCA_API_TOKEN` | Server env + A/M 本机环境 | A/M 调 `/mcp`、`/api` 的 Bearer token；Server 用它校验 | 是 |
 | `DATABASE_URL` | Server env | 线上状态库连接串；未设置时本地使用 SQLite | 是 |
-| `TCA_ALLOWED_HOSTS` | Server env | MCP transport security 允许的 host，不带 `https://` | 否 |
+| `TCA_ALLOWED_HOSTS` | Server env | `/mcp` 的 Host header 白名单，填 TCA Server 域名，不带 `https://` | 否 |
 | `GITHUB_WEBHOOK_SECRET` | Server env + 被测 repo GitHub webhook 设置 | 启用 GitHub adapter 时，GitHub 用它签名，TCA 用它验签 | 是 |
 | `GITHUB_TOKEN` | Server env | 启用 GitHub adapter 时，TCA 用它从 GitHub 读取 `.tca/claim.yaml` | 是 |
-| `GITHUB_API_URL` | Server env，可选 | GitHub API 地址，默认 `https://api.github.com` | 否 |
-| `TCA_CLAIM_BRANCH_PREFIX` | Server env，可选 | Claim 分支前缀，默认 `tca/claim/` | 否 |
-| `TCA_CLAIM_PATH` | Server env，可选 | Claim 文件路径，默认 `.tca/claim.yaml` | 否 |
 
 三把容易混的钥匙：
 
@@ -215,6 +209,14 @@ TCA_ALLOWED_HOSTS=replace-with-tca-server-host
 ```bash
 GITHUB_WEBHOOK_SECRET=replace-with-webhook-secret
 GITHUB_TOKEN=replace-with-github-token
+```
+
+Claim 入口当前直接规定，不再暴露成环境变量：
+
+```text
+Claim 分支：tca/claim/<claim-id>
+Claim 文件：.tca/claim.yaml
+GitHub API：https://api.github.com
 ```
 
 `/health` 不需要 token。`/mcp` 和 `/api/*` 需要：
@@ -281,6 +283,7 @@ templates/test-repo/.tca/claim.example.yaml
 - 没有 TCA 自举配置：根目录不放 `.tca/`、`.codex/`、MCP 本机活配置。
 - 没有 `heartbeat`、`update_progress`、`abandon_claim` MCP tool。
 - 没有 `.tca/agreements/` 模板目录。
+- 没有自定义 Claim 分支前缀或 Claim 文件路径；V1 固定为 `tca/claim/*` 和 `.tca/claim.yaml`。
 - 没有 GitHub status check / CI 门禁。
 - 没有内置 M Runner；M 是外部 Agent，通过 MCP 领取协调任务。
 - 没有多用户 token、项目级权限、审计后台。

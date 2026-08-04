@@ -5,7 +5,7 @@
 最小流程：
 
 1. 阅读 `.tca/protocol.md`。
-2. 读取 `.tca/project.yaml`，确认项目标识、Claim 分支和 TCA MCP 地址。
+2. 读取 `.tca/project.yaml`，确认项目标识和 TCA MCP 地址。
 3. 修改共享代码前，通过 Git 分支发布 `.tca/claim.yaml`。
 4. 通过 TCA MCP 查询 Claim 状态与 `allowed_actions`。
 5. 只有 C 返回允许 `start_execution` 时才可开始修改。

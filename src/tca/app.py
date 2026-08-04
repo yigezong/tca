@@ -48,23 +48,16 @@ def build_components() -> tuple[Controller, GitHubWebhookHandler | None]:
         build_store(),
         BasicRuleChecker(),
     )
-    branch_prefix = os.getenv("TCA_CLAIM_BRANCH_PREFIX", "tca/claim/")
 
     github = None
     github_secret = os.getenv("GITHUB_WEBHOOK_SECRET", "")
     if github_secret:
         github_token = os.getenv("GITHUB_TOKEN", "")
-        api_url = os.getenv("GITHUB_API_URL", "https://api.github.com")
-        loader = GitHubContentLoader(
-            token=github_token,
-            claim_path=os.getenv("TCA_CLAIM_PATH", ".tca/claim.yaml"),
-            api_url=api_url,
-        )
+        loader = GitHubContentLoader(token=github_token)
         github = GitHubWebhookHandler(
             controller=controller,
             loader=loader,
             secret=github_secret,
-            branch_prefix=branch_prefix,
         )
 
     return controller, github
