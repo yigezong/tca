@@ -15,7 +15,6 @@ class ClaimState(StrEnum):
     BLOCKED = "blocked"
     EXECUTING = "executing"
     COMPLETED = "completed"
-    STALE = "stale"
 
 
 TERMINAL_STATES = {ClaimState.COMPLETED}
@@ -28,7 +27,6 @@ ACTIVE_STATES = {
     ClaimState.NEEDS_HUMAN,
     ClaimState.BLOCKED,
     ClaimState.EXECUTING,
-    ClaimState.STALE,
 }
 
 
@@ -144,16 +142,14 @@ def allowed_actions(state: ClaimState) -> tuple[str, ...]:
     return {
         ClaimState.RECEIVED: (),
         ClaimState.ASSESSING: ("get_claim_state",),
-        ClaimState.APPROVED: ("start_execution", "amend_claim", "abandon_claim"),
+        ClaimState.APPROVED: ("start_execution", "amend_claim"),
         ClaimState.APPROVED_WITH_CONSTRAINTS: (
             "start_execution",
             "amend_claim",
-            "abandon_claim",
         ),
-        ClaimState.WAITING: ("get_claim_state", "amend_claim", "abandon_claim"),
-        ClaimState.NEEDS_HUMAN: ("get_claim_state", "amend_claim", "abandon_claim"),
-        ClaimState.BLOCKED: ("get_claim_state", "amend_claim", "abandon_claim"),
-        ClaimState.EXECUTING: ("heartbeat", "update_progress", "amend_claim", "complete_claim"),
+        ClaimState.WAITING: ("get_claim_state", "amend_claim"),
+        ClaimState.NEEDS_HUMAN: ("get_claim_state", "amend_claim"),
+        ClaimState.BLOCKED: ("get_claim_state", "amend_claim"),
+        ClaimState.EXECUTING: ("amend_claim", "complete_claim"),
         ClaimState.COMPLETED: (),
-        ClaimState.STALE: ("heartbeat", "amend_claim", "abandon_claim"),
     }[state]

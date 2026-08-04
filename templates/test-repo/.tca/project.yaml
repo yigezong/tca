@@ -14,6 +14,3 @@ mcp:
   url: https://replace-with-tca-server.example.com/mcp
   auth: bearer-token
   token_env: TCA_API_TOKEN
-
-coordination:
-  agreements_dir: .tca/agreements

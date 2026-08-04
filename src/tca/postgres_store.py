@@ -37,13 +37,6 @@ class PostgresClaimStore:
                 updated_at TEXT NOT NULL
             )""",
             "CREATE INDEX IF NOT EXISTS claims_project_state ON claims(project_id, state)",
-            """CREATE TABLE IF NOT EXISTS audit_events (
-                id BIGSERIAL PRIMARY KEY,
-                claim_id TEXT NOT NULL,
-                event TEXT NOT NULL,
-                detail TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )""",
             """CREATE TABLE IF NOT EXISTS coordination_tasks (
                 claim_id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,
@@ -87,7 +80,6 @@ class PostgresClaimStore:
                         now,
                     ),
                 )
-                event = "claim_received"
             else:
                 if claim.version <= row["claim_version"]:
                     raise ValueError(
@@ -108,13 +100,6 @@ class PostgresClaimStore:
                         claim.claim_id,
                     ),
                 )
-                event = "claim_amended"
-            self._audit(
-                connection,
-                claim.claim_id,
-                event,
-                {"claim_version": claim.version},
-            )
         return self.get(claim.claim_id)
 
     def transition(
@@ -123,7 +108,6 @@ class PostgresClaimStore:
         expected: set[ClaimState],
         target: ClaimState,
         decision: Decision | None = None,
-        detail: dict[str, object] | None = None,
     ) -> ClaimRecord:
         with self._connect() as connection:
             row = connection.execute(
@@ -148,12 +132,6 @@ class PostgresClaimStore:
                     _now(),
                     claim_id,
                 ),
-            )
-            self._audit(
-                connection,
-                claim_id,
-                "state_transition",
-                {"from": current.value, "to": target.value, **(detail or {})},
             )
         return self.get(claim_id)
 
@@ -184,29 +162,6 @@ class PostgresClaimStore:
             rows = connection.execute(query, parameters).fetchall()
         return [self._decode(row) for row in rows]
 
-    def record_activity(
-        self,
-        claim_id: str,
-        event: str,
-        detail: dict[str, object] | None = None,
-    ) -> ClaimRecord:
-        with self._connect() as connection:
-            row = connection.execute(
-                "SELECT state, revision FROM claims WHERE claim_id = %s FOR UPDATE",
-                (claim_id,),
-            ).fetchone()
-            if row is None:
-                raise KeyError(claim_id)
-            state = ClaimState(row["state"])
-            if state not in ACTIVE_STATES:
-                raise ValueError(f"claim {claim_id} is not active")
-            connection.execute(
-                "UPDATE claims SET revision = %s, updated_at = %s WHERE claim_id = %s",
-                (row["revision"] + 1, _now(), claim_id),
-            )
-            self._audit(connection, claim_id, event, detail or {})
-        return self.get(claim_id)
-
     def queue_coordination(self, claim_id: str) -> None:
         record = self.get(claim_id)
         now = _now()
@@ -229,12 +184,6 @@ class PostgresClaimStore:
                     now,
                 ),
             )
-            self._audit(
-                connection,
-                claim_id,
-                "coordination_requested",
-                {"claim_revision": record.revision},
-            )
 
     def next_coordination_claim_id(self, project_id: str | None = None) -> str | None:
         query = "SELECT claim_id FROM coordination_tasks WHERE status = 'pending'"
@@ -247,7 +196,7 @@ class PostgresClaimStore:
             row = connection.execute(query, parameters).fetchone()
         return str(row["claim_id"]) if row else None
 
-    def complete_coordination(self, claim_id: str, coordinator_id: str) -> None:
+    def complete_coordination(self, claim_id: str) -> None:
         with self._connect() as connection:
             cursor = connection.execute(
                 """UPDATE coordination_tasks SET status = 'completed', updated_at = %s
@@ -256,41 +205,6 @@ class PostgresClaimStore:
             )
             if cursor.rowcount != 1:
                 raise ValueError(f"claim {claim_id} has no pending coordination task")
-            self._audit(
-                connection,
-                claim_id,
-                "coordination_completed",
-                {"coordinator_id": coordinator_id},
-            )
-
-    def audit_events(self, claim_id: str) -> list[dict[str, object]]:
-        with self._connect() as connection:
-            rows = connection.execute(
-                """SELECT event, detail, created_at FROM audit_events
-                WHERE claim_id = %s ORDER BY id""",
-                (claim_id,),
-            ).fetchall()
-        return [
-            {
-                "event": row["event"],
-                "detail": json.loads(row["detail"]),
-                "created_at": row["created_at"],
-            }
-            for row in rows
-        ]
-
-    @staticmethod
-    def _audit(
-        connection: psycopg.Connection,
-        claim_id: str,
-        event: str,
-        detail: dict[str, object],
-    ) -> None:
-        connection.execute(
-            """INSERT INTO audit_events(claim_id, event, detail, created_at)
-            VALUES (%s, %s, %s, %s)""",
-            (claim_id, event, json.dumps(detail), _now()),
-        )
 
     @staticmethod
     def _decode(row: dict[str, Any]) -> ClaimRecord:

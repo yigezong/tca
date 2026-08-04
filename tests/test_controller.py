@@ -34,7 +34,6 @@ def approve_claim(controller: Controller, claim_id: str) -> None:
     controller.submit_coordination_decision(
         claim_id,
         Decision(ClaimState.APPROVED, "semantic review found no conflict"),
-        "team-m",
     )
 
 
@@ -70,10 +69,6 @@ def test_overlapping_claim_waits_and_reassesses_after_completion() -> None:
     task = controller.get_coordination_task("team/project")
     assert task is not None
     assert task.claim.claim.claim_id == "claim-2"
-    events = controller.store.audit_events("claim-2")
-    assert any(
-        event["detail"].get("triggered_by") == "claim-1" for event in events
-    )
 
 
 def test_amend_requires_new_claim_version() -> None:
@@ -107,7 +102,6 @@ def test_m_gets_task_and_c_applies_its_decision() -> None:
     decided = controller.submit_coordination_decision(
         "claim-1",
         Decision(ClaimState.APPROVED, "semantic review found no conflict"),
-        "team-m",
     )
 
     assert decided.state is ClaimState.APPROVED
@@ -122,5 +116,4 @@ def test_m_cannot_force_execution() -> None:
         controller.submit_coordination_decision(
             "claim-1",
             Decision(ClaimState.EXECUTING, "skip approval"),
-            "bad-m",
         )

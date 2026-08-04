@@ -14,8 +14,8 @@ Git provider ─ webhook ─► TCA Server / C ─► 状态数据库
 
 组件职责：
 
-- **C / Controller**：权威状态机，校验 Claim、保存审计记录、返回 `allowed_actions`。
-- **A / 开发 Agent**：提出 Claim，获批后执行修改，并通过 MCP 汇报进度。
+- **C / Controller**：权威状态机，校验 Claim、维护协调队列、返回 `allowed_actions`。
+- **A / 开发 Agent**：提出 Claim，获批后执行修改，并通过 MCP 开始和完成任务。
 - **M / 协调 Agent**：从 MCP 领取待协调 Claim，判断冲突、依赖和约束，并提交建议。
 - **Git provider**：保存代码、Claim 分支和 `.tca/claim.yaml`。
 - **状态数据库**：保存 Claim 状态和协调任务；本地用 SQLite，部署用 Postgres。
@@ -31,7 +31,7 @@ Git provider ─ webhook ─► TCA Server / C ─► 状态数据库
 6. A 通过 MCP 等待决策
 7. C 返回 state、decision 和 allowed_actions
 8. A 只有在 allowed_actions 包含 start_execution 时才开始修改
-9. A 汇报 heartbeat / progress，完成后调用 complete_claim
+9. A 完成后调用 complete_claim
 ```
 
 C 是唯一权威状态源。A 和 M 都不能直接改数据库，也不能自行推断状态。
@@ -55,7 +55,7 @@ TCA_ALLOWED_HOSTS=...
 示例：
 
 ```bash
-TCA_ALLOWED_HOSTS=tca-ten.vercel.app
+TCA_ALLOWED_HOSTS=tca.example.com
 ```
 
 `/health` 不需要 token，用于部署检查。`/mcp` 和 `/api/*` 需要：
@@ -87,7 +87,6 @@ templates/test-repo/AGENTS.md
 templates/test-repo/.tca/protocol.md
 templates/test-repo/.tca/project.yaml
 templates/test-repo/.tca/claim.example.yaml
-templates/test-repo/.tca/agreements/README.md
 ```
 
 复制到被测 repo 后，替换 `.tca/project.yaml` 里的 `project_id` 和 `mcp.url`。

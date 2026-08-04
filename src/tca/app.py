@@ -126,8 +126,8 @@ def create_app():
 def main() -> None:
     uvicorn.run(
         create_app(),
-        host=os.getenv("TCA_HOST", "0.0.0.0"),
-        port=int(os.getenv("TCA_PORT", "8000")),
+        host="0.0.0.0",
+        port=8000,
     )
 
 

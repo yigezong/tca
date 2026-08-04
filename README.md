@@ -13,7 +13,7 @@ Git provider ─ webhook ─► TCA Server / C ─► 状态数据库
 ```
 
 - C 是确定性 Controller，维护 Claim 状态机和允许动作。
-- A 是开发 Agent，通过 MCP 查询状态、汇报进度和完成任务。
+- A 是开发 Agent，通过 MCP 查询状态、开始执行和完成任务。
 - M 是外部协调 Agent，通过 MCP 领取 Claim 并提交协调建议。
 - Git provider 保存 Claim 分支和 Claim 文件；当前代码包含 GitHub adapter。
 - 状态数据库本地可用 SQLite，部署使用 Postgres。
@@ -40,7 +40,7 @@ TCA_ALLOWED_HOSTS=...
 
 - `TCA_API_TOKEN`：A/M 调用 `/mcp` 和 `/api` 的 Bearer token。
 - `DATABASE_URL`：线上 Postgres 连接串。
-- `TCA_ALLOWED_HOSTS`：允许访问 MCP 的主机名，不带 `https://`，例如 `tca-ten.vercel.app`。
+- `TCA_ALLOWED_HOSTS`：允许访问 MCP 的主机名，不带 `https://`，例如 `tca.example.com`。
 
 部署后用 `/health` 验证服务：
 

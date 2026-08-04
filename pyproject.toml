@@ -16,7 +16,6 @@ dependencies = [
 ]
 
 [project.scripts]
-tca-mcp = "tca.mcp_server:main"
 tca-app = "tca.app:main"
 
 [tool.setuptools.packages.find]

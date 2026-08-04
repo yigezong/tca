@@ -15,13 +15,12 @@ A 和 M 都是 TCA Server 之外的客户端，都通过 MCP 与 C 交互。
 2. 在该分支提交 `.tca/claim.yaml`，说明目标、工作分支、预计路径和依赖。
 3. Push Claim 分支；Git provider webhook 调用 `/webhooks/github` 通知 C。
 4. 调用 `wait_for_decision`。只有 `allowed_actions` 包含 `start_execution` 时才能开始。
-5. 执行期间调用 `heartbeat` 和 `update_progress`。
-6. 范围变化时停止越界修改并更新 Claim；完成后调用 `complete_claim`。
+5. 范围变化时停止越界修改并更新 Claim；完成后调用 `complete_claim`。
 
 ## M 的最短流程
 
 1. 调用 `get_coordination_task` 获取待协调 Claim 和当前活跃 Claim。
-2. 参考 `.tca/agreements/` 判断语义冲突、依赖、约束及是否需要人类。
+2. 判断语义冲突、依赖、约束及是否需要人类。
 3. 调用 `submit_coordination_decision` 提交建议。
 4. C 校验建议；M 不能直接把 Claim 变为 `executing` 或 `completed`。
 

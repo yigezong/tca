@@ -15,7 +15,7 @@ from .store import build_store
 INSTRUCTIONS = """
 TCA coordinates coding-agent work in Git-enabled projects.
 A: after publishing a Claim branch, call wait_for_decision before shared code changes.
-A: only start when allowed_actions includes start_execution; report progress and completion.
+A: only start when allowed_actions includes start_execution; call complete_claim when done.
 M: use get_coordination_task and submit_coordination_decision.
 The Controller is authoritative; A and M must not infer state from local memory.
 """.strip()
@@ -33,15 +33,15 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
     allowed_hosts = [
         host.strip()
         for host in os.getenv(
-            "TCA_ALLOWED_HOSTS", "127.0.0.1,localhost,tca-ten.vercel.app"
+            "TCA_ALLOWED_HOSTS", "127.0.0.1,localhost"
         ).split(",")
         if host.strip()
     ]
     mcp = FastMCP(
         "Team Code Agent",
         instructions=INSTRUCTIONS,
-        host=os.getenv("TCA_HOST", "127.0.0.1"),
-        port=int(os.getenv("TCA_MCP_PORT", "8000")),
+        host="127.0.0.1",
+        port=8000,
         stateless_http=True,
         json_response=True,
         transport_security=TransportSecuritySettings(allowed_hosts=allowed_hosts),
@@ -71,18 +71,6 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
         return controller.start_execution(claim_id).to_mapping()
 
     @mcp.tool()
-    def heartbeat(claim_id: str) -> dict[str, object]:
-        """For A: record that work on an active Claim is alive."""
-        return controller.heartbeat(claim_id).to_mapping()
-
-    @mcp.tool()
-    def update_progress(
-        claim_id: str, status: str, message: str = ""
-    ) -> dict[str, object]:
-        """For A: record progress without changing Claim scope."""
-        return controller.update_progress(claim_id, status, message).to_mapping()
-
-    @mcp.tool()
     def complete_claim(claim_id: str) -> dict[str, object]:
         """For A: complete executing work and trigger dependent reevaluation."""
         return controller.complete_claim(claim_id).to_mapping()
@@ -98,7 +86,6 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
         claim_id: str,
         state: str,
         reason: str,
-        coordinator_id: str,
         constraints: list[str] | None = None,
         wait_for: list[str] | None = None,
         conflicts_with: list[str] | None = None,
@@ -113,16 +100,6 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
                 "conflicts_with": conflicts_with or [],
             }
         )
-        return controller.submit_coordination_decision(
-            claim_id, decision, coordinator_id
-        ).to_mapping()
+        return controller.submit_coordination_decision(claim_id, decision).to_mapping()
 
     return mcp
-
-
-def main() -> None:
-    create_mcp().run(transport="streamable-http")
-
-
-if __name__ == "__main__":
-    main()

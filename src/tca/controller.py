@@ -53,24 +53,11 @@ class Controller:
             ClaimState.NEEDS_HUMAN,
             ClaimState.BLOCKED,
             ClaimState.EXECUTING,
-            ClaimState.STALE,
         }:
             raise ValueError(
                 f"claim {claim.claim_id} cannot be amended from {current.state.value}"
             )
         return self.submit_claim(claim)
-
-    def heartbeat(self, claim_id: str) -> ClaimRecord:
-        return self.store.record_activity(claim_id, "heartbeat")
-
-    def update_progress(
-        self, claim_id: str, status: str, message: str = ""
-    ) -> ClaimRecord:
-        if not status.strip():
-            raise ValueError("progress status is required")
-        return self.store.record_activity(
-            claim_id, "progress_updated", {"status": status, "message": message}
-        )
 
     def complete_claim(self, claim_id: str) -> ClaimRecord:
         completed = self.store.transition(
@@ -94,7 +81,7 @@ class Controller:
         return CoordinationTask(record, tuple(active))
 
     def submit_coordination_decision(
-        self, claim_id: str, decision: Decision, coordinator_id: str
+        self, claim_id: str, decision: Decision
     ) -> ClaimRecord:
         allowed_states = {
             ClaimState.APPROVED,
@@ -110,9 +97,8 @@ class Controller:
             {ClaimState.ASSESSING},
             decision.state,
             decision=decision,
-            detail={"coordinator_id": coordinator_id},
         )
-        self.store.complete_coordination(claim_id, coordinator_id)
+        self.store.complete_coordination(claim_id)
         return record
 
     def _assess_or_queue(
@@ -144,9 +130,4 @@ class Controller:
             others = self.store.list_active(
                 record.claim.project_id, exclude=record.claim.claim_id
             )
-            reassessed = self._assess_or_queue(record.claim, others)
-            self.store.record_activity(
-                reassessed.claim.claim_id,
-                "waiter_reassessed",
-                {"triggered_by": completed.claim.claim_id},
-            )
+            self._assess_or_queue(record.claim, others)
