@@ -61,6 +61,18 @@ def verify_github_signature(secret: str, body: bytes, signature: str | None) -> 
     return hmac.compare_digest(signature, f"sha256={expected}")
 
 
+def parse_claim_branch(branch: str) -> tuple[str | None, str] | None:
+    if not branch.startswith(CLAIM_BRANCH_PREFIX):
+        return None
+    suffix = branch.removeprefix(CLAIM_BRANCH_PREFIX).strip("/")
+    parts = [part for part in suffix.split("/") if part]
+    if len(parts) == 1:
+        return None, parts[0]
+    if len(parts) == 2:
+        return parts[0], parts[1]
+    return None
+
+
 @dataclass(slots=True)
 class GitHubWebhookHandler:
     controller: Controller
@@ -80,15 +92,18 @@ class GitHubWebhookHandler:
         if not ref.startswith(heads_prefix):
             return None
         branch = ref.removeprefix(heads_prefix)
-        if not branch.startswith(CLAIM_BRANCH_PREFIX):
+        claim_branch = parse_claim_branch(branch)
+        if claim_branch is None:
             return None
+        branch_author, claim_id = claim_branch
         repository = str(payload.get("repository", {}).get("full_name", ""))
         if not repository:
             raise ValueError("GitHub webhook is missing repository.full_name")
         value = self.loader.load(repository, branch)
-        claim_id = branch.removeprefix(CLAIM_BRANCH_PREFIX)
         value.setdefault("claim_id", claim_id)
         value.setdefault("project_id", repository)
         if value["claim_id"] != claim_id:
             raise ValueError("claim_id does not match Claim branch")
+        if branch_author is not None and value.get("author") != branch_author:
+            raise ValueError("author does not match Claim branch")
         return self.controller.submit_claim(Claim.from_mapping(value))

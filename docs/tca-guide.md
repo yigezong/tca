@@ -60,7 +60,7 @@ sequenceDiagram
     participant DB as DB
     participant M as M：协调 Agent
 
-    A->>Git: push tca/claim/<claim-id>
+    A->>Git: push tca/claim/<agent-id>/<claim-id>
     Git->>C: POST /webhooks/github（当前 GitHub adapter）
     C->>Git: 使用 Git provider token 读取 .tca/claim.yaml
     C->>DB: 保存 Claim，进入 assessing
@@ -77,7 +77,7 @@ sequenceDiagram
 
 文本版流程：
 
-1. A 先提交 Claim。普通 GitHub 被测 repo 走 `tca/claim/<claim-id>` 分支和 `.tca/claim.yaml`；CooperBench 这类非 GitHub git server 可以走 MCP `submit_claim`。
+1. A 先提交 Claim。普通 GitHub 被测 repo 走 `tca/claim/<agent-id>/<claim-id>` 分支和 `.tca/claim.yaml`；CooperBench 这类非 GitHub git server 可以走 MCP `submit_claim`。
 2. C 写入 Claim，进入 `assessing`，并把任务放入 M 的协调队列。
 3. M 通过 MCP 领取任务，提交 `approved`、`approved_with_constraints`、`waiting`、`blocked` 或 `needs_human`。
 4. C 校验 M 的建议并更新状态。
@@ -171,7 +171,7 @@ flowchart LR
     WebhookSecret -->|"签名请求"| Webhook
     Webhook -->|"POST + x-hub-signature-256"| App
     GhSecret -->|"验签"| App
-    Claim -->|"固定规则：tca/claim/* + .tca/claim.yaml"| App
+    Claim -->|"固定规则：tca/claim/<agent-id>/<claim-id> + .tca/claim.yaml"| App
     GhToken -->|"GitHub Contents API"| App
     DbUrl -->|"读写 Claim 状态"| App
 ```
@@ -209,7 +209,7 @@ fringsoo/tca push -> Vercel Git integration -> 部署 TCA Server
 `/webhooks/github` 是给被测 repo 用的：
 
 ```text
-被测 repo push tca/claim/* -> GitHub webhook -> TCA Server /webhooks/github
+被测 repo push tca/claim/<agent-id>/<claim-id> -> GitHub webhook -> TCA Server /webhooks/github
 ```
 
 所以当前整理 TCA Server 本体时，Vercel 应该保留，GitHub webhook 可以不配。等之后接入独立被测 repo，再给那个被测 repo 配 webhook。
@@ -232,10 +232,12 @@ GITHUB_TOKEN=replace-with-github-token
 GitHub Claim 入口当前直接规定，不再暴露成环境变量：
 
 ```text
-Claim 分支：tca/claim/<claim-id>
+Claim 分支：tca/claim/<agent-id>/<claim-id>
 Claim 文件：.tca/claim.yaml
 GitHub API：https://api.github.com
 ```
+
+分支里的 `<agent-id>` 必须等于 `.tca/claim.yaml` 的 `author`，`<claim-id>` 必须等于 `.tca/claim.yaml` 的 `claim_id`。每个逻辑任务使用新的 `claim_id`；同一个 Claim 调整范围时复用同一分支并递增 `version`。
 
 CooperBench 这类非 GitHub git server 不走 `/webhooks/github`，由 adapter 通过 MCP `submit_claim` 直接提交同一份 Claim 数据。
 
@@ -305,7 +307,7 @@ templates/test-repo/.tca/claim.example.yaml
 - 没有 TCA 自举配置：根目录不放 `.tca/`、`.codex/`、MCP 本机活配置。
 - 没有 `heartbeat`、`update_progress`、`abandon_claim` MCP tool。
 - 没有 `.tca/agreements/` 模板目录。
-- 没有自定义 Claim 分支前缀或 Claim 文件路径；V1 固定为 `tca/claim/*` 和 `.tca/claim.yaml`。
+- 没有自定义 Claim 分支前缀或 Claim 文件路径；V1 固定为 `tca/claim/<agent-id>/<claim-id>` 和 `.tca/claim.yaml`。
 - 没有 GitHub status check / CI 门禁。
 - 没有 TCA 主动唤醒 A/M；当前使用 `wait_for_decision` 和 `wait_for_coordination_task` 做 long-polling。
 - 没有内置 M Runner；M 是外部 Agent，通过 MCP 领取协调任务。

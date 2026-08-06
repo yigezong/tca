@@ -11,7 +11,7 @@ A 和 M 都是 TCA Server 之外的客户端，都通过 MCP 与 C 交互。
 
 ## A 的最短流程
 
-1. 从最新目标分支创建 `tca/claim/<claim-id>` 分支。
+1. 从最新目标分支创建 `tca/claim/<agent-id>/<claim-id>` 分支。
 2. 在该分支提交 `.tca/claim.yaml`，说明目标、工作分支、预计路径和依赖。
 3. Push Claim 分支；Git provider webhook 调用 `/webhooks/github` 通知 C。
 4. 调用 `wait_for_decision(project_id, claim_id)`。只有 `allowed_actions` 包含 `start_execution` 时才能开始。
@@ -29,6 +29,8 @@ A 和 M 都是 TCA Server 之外的客户端，都通过 MCP 与 C 交互。
 Git provider 保存 Claim 和代码历史；TCA 状态数据库保存 C 的权威运行状态。A 通过 MCP 读取 Decision。MCP 是 A、M 与 C 的通信接口。只有 C 可以执行状态转换。
 
 Claim 的运行时身份是 `(project_id, claim_id)`。不同项目可以使用相同 `claim_id`，但调用 Claim 相关 MCP tool 时必须传入 `.tca/project.yaml` 中的 `project_id`。
+
+GitHub Claim 分支命名为 `tca/claim/<agent-id>/<claim-id>`。`agent-id` 必须等于 `.tca/claim.yaml` 的 `author`，`claim-id` 必须等于 `.tca/claim.yaml` 的 `claim_id`。每个逻辑任务使用新的 `claim_id`；同一个 Claim 需要补充范围时复用同一分支并递增 `version`。
 
 如果 MCP 不可连接、Claim 状态不明确或所需操作不在 `allowed_actions` 中，Agent 必须停止共享范围修改并向人报告。
 

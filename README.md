@@ -17,6 +17,7 @@ Git provider ─ webhook ─► TCA Server / C ─► 状态数据库
 - M 是外部协调 Agent，通过 MCP 领取 Claim 并提交协调建议。
 - Git provider 保存 Claim 分支和 Claim 文件；当前代码包含 GitHub adapter。
 - 非 GitHub 场景可以通过 MCP `submit_claim` 直接提交 Claim。
+- GitHub Claim 分支使用 `tca/claim/<agent-id>/<claim-id>`，分支里的 agent 和 Claim 文件里的 `author` 必须一致。
 - 状态数据库本地可用 SQLite，部署使用 Postgres。
 
 ## 本地开发

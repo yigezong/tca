@@ -7,7 +7,7 @@
 1. 阅读 `.tca/protocol.md`。
 2. 读取 `.tca/project.yaml`，确认项目标识、TCA MCP 地址和 `token_env`。
 3. 在每个 A/M 运行环境里提供 `TCA_API_TOKEN`；可复制 `.env.example` 为 `.env`，但不得提交真实 `.env`。
-4. 修改共享代码前，通过 Git 分支发布 `.tca/claim.yaml`。
+4. 修改共享代码前，通过 Git 分支 `tca/claim/<agent-id>/<claim-id>` 发布 `.tca/claim.yaml`。
 5. 通过 TCA MCP 查询 Claim 状态与 `allowed_actions`；Claim 调用必须带 `project_id` 和 `claim_id`。
 6. 只有 C 返回允许 `start_execution` 时才可开始修改。
 
