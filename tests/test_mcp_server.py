@@ -1,7 +1,9 @@
+import asyncio
+
 import pytest
 
 from tca.controller import Controller
-from tca.domain import Claim
+from tca.domain import Claim, ClaimState, Decision
 from tca.mcp_server import create_mcp
 from tca.rules import BasicRuleChecker
 from tca.store import ClaimStore
@@ -86,3 +88,41 @@ async def test_mcp_claim_tools_are_project_scoped() -> None:
     claim_state = result
     assert claim_state["claim"]["project_id"] == "team/project"
     assert claim_state["claim"]["claim_id"] == "claim-1"
+
+
+@pytest.mark.anyio
+async def test_wait_for_decision_waits_through_waiting_claims() -> None:
+    mcp, controller = make_mcp()
+    first = controller.submit_claim(make_claim("claim-1"))
+    controller.submit_coordination_decision(
+        "team/project",
+        first.claim.claim_id,
+        Decision(ClaimState.APPROVED, "first claim may run"),
+    )
+    controller.start_execution("team/project", first.claim.claim_id)
+    second = controller.submit_claim(make_claim("claim-2"))
+    assert second.state is ClaimState.WAITING
+
+    async def release_waiter() -> None:
+        await asyncio.sleep(0.05)
+        controller.complete_claim("team/project", first.claim.claim_id)
+        controller.submit_coordination_decision(
+            "team/project",
+            second.claim.claim_id,
+            Decision(ClaimState.APPROVED, "second claim may now run"),
+        )
+
+    release_task = asyncio.create_task(release_waiter())
+    _, result = await mcp.call_tool(
+        "wait_for_decision",
+        {
+            "project_id": "team/project",
+            "claim_id": second.claim.claim_id,
+            "timeout_seconds": 1,
+            "poll_seconds": 0.01,
+        },
+    )
+    await release_task
+
+    assert result["state"] == "approved"
+    assert result["allowed_actions"] == ["start_execution"]

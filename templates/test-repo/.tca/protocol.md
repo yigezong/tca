@@ -20,7 +20,7 @@ A 和 M 都是 TCA Server 之外的客户端，都通过 MCP 与 C 交互。
 
 ## M 的最短流程
 
-1. 调用 `wait_for_coordination_task(project_id)` 等待待协调 Claim；或用 `get_coordination_task(project_id)` 做单次检查。
+1. 常驻调用 `wait_for_coordination_task(project_id)` 等待待协调 Claim；或用 `get_coordination_task(project_id)` 做单次检查。
 2. 判断语义冲突、依赖、约束及是否需要人类。
 3. 调用 `submit_coordination_decision(project_id, claim_id, ...)` 提交建议。
 4. C 校验建议；M 不能直接把 Claim 变为 `executing` 或 `completed`。
@@ -37,7 +37,7 @@ GitHub Claim 分支命名为 `tca/claim/<agent-id>/<claim-id>`。`agent-id` 必�
 
 如果 MCP 不可连接、Claim 状态不明确或所需操作不在 `allowed_actions` 中，Agent 必须停止共享范围修改并向人报告。
 
-当前协议使用 long-polling。TCA 不主动唤醒 A/M；A 使用 `wait_for_decision` 等待决策，M 使用 `wait_for_coordination_task` 等待协调任务。
+当前协议使用 long-polling。TCA 不主动唤醒 A/M；A 使用 `wait_for_decision` 等待决策，M Runner 使用 `wait_for_coordination_task` 常驻等待协调任务。
 
 ## 凭证
 
@@ -62,6 +62,7 @@ TCA_AGENT_ID=agent-a1
 
 ```bash
 uv run --project ../proj_tca tca-client task
+uv run --project ../proj_tca tca-client watch
 uv run --project ../proj_tca tca-client approve <claim_id>
 uv run --project ../proj_tca tca-client wait <claim_id>
 uv run --project ../proj_tca tca-client start <claim_id>

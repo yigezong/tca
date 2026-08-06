@@ -11,6 +11,8 @@ from typing import Any
 
 import yaml
 
+from .rules import paths_overlap
+
 
 DEFAULT_TOKEN_ENV = "TCA_API_TOKEN"
 
@@ -144,7 +146,52 @@ def load_claim(path: Path, project_id: str) -> dict[str, object]:
 
 
 def print_json(value: object) -> None:
-    print(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True))
+    print(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True), flush=True)
+
+
+def auto_decision_for_task(task: Mapping[str, Any]) -> dict[str, object]:
+    claim_record = task.get("claim")
+    if not isinstance(claim_record, Mapping):
+        raise TcaClientError("coordination task is missing claim record")
+    claim = claim_record.get("claim")
+    if not isinstance(claim, Mapping):
+        raise TcaClientError("coordination task claim record is missing claim")
+
+    planned_paths = [str(path) for path in claim.get("planned_paths", ())]
+    conflicts: list[str] = []
+    constraints: list[str] = []
+    for raw_record in task.get("active_claims", ()):
+        if not isinstance(raw_record, Mapping):
+            continue
+        active_claim = raw_record.get("claim")
+        if not isinstance(active_claim, Mapping):
+            continue
+        active_paths = [str(path) for path in active_claim.get("planned_paths", ())]
+        if any(
+            paths_overlap(candidate, occupied)
+            for candidate in planned_paths
+            for occupied in active_paths
+        ):
+            claim_id = str(active_claim.get("claim_id", ""))
+            if claim_id:
+                conflicts.append(claim_id)
+            constraints.extend(active_paths)
+
+    if conflicts:
+        return {
+            "state": "waiting",
+            "reason": "planned paths overlap active claims",
+            "constraints": sorted(set(constraints)),
+            "wait_for": conflicts,
+            "conflicts_with": conflicts,
+        }
+    return {
+        "state": "approved",
+        "reason": "No active path conflicts among active claims.",
+        "constraints": [],
+        "wait_for": [],
+        "conflicts_with": [],
+    }
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -153,6 +200,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mcp-url", help="Override .tca/project.yaml mcp.url.")
     parser.add_argument("--project-id", help="Override .tca/project.yaml project_id.")
     parser.add_argument("--token-env", help="Override .tca/project.yaml mcp.token_env.")
+    parser.add_argument(
+        "--env-file",
+        action="append",
+        default=[],
+        type=Path,
+        help="Extra dotenv file to load before .env files in cwd and repo root.",
+    )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -161,6 +215,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     task = subparsers.add_parser("task", help="M: wait for a coordination task.")
     task.add_argument("--timeout", type=float, default=30.0)
+
+    watch = subparsers.add_parser(
+        "watch", help="M: continuously wait for and auto-decide coordination tasks."
+    )
+    watch.add_argument("--timeout", type=float, default=30.0)
+    watch.add_argument("--max-tasks", type=int, default=0)
+    watch.add_argument(
+        "--idle-exit",
+        action="store_true",
+        help="Exit after the first idle timeout instead of waiting forever.",
+    )
 
     approve = subparsers.add_parser("approve", help="M: submit a coordination decision.")
     approve.add_argument("claim_id")
@@ -198,6 +263,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 async def run(args: argparse.Namespace) -> dict[str, Any] | None:
     repo_root = args.repo_root.resolve() if args.repo_root else find_repo_root(Path.cwd())
+    for env_file in args.env_file:
+        load_dotenv(env_file.resolve())
+    load_dotenv(Path.cwd() / ".env")
     load_dotenv(repo_root / ".env")
     config = load_project_config(repo_root)
 
@@ -231,6 +299,54 @@ async def run(args: argparse.Namespace) -> dict[str, Any] | None:
                 "poll_seconds": 0.25,
             },
         )
+    if args.command == "watch":
+        processed: list[dict[str, Any]] = []
+        while args.max_tasks <= 0 or len(processed) < args.max_tasks:
+            task = await call_tool(
+                mcp_url=mcp_url,
+                token=token,
+                name="wait_for_coordination_task",
+                arguments={
+                    "project_id": project_id,
+                    "timeout_seconds": args.timeout,
+                    "poll_seconds": 0.25,
+                },
+            )
+            if task is None:
+                event = {"event": "idle", "project_id": project_id}
+                print_json(event)
+                if args.idle_exit:
+                    break
+                continue
+
+            decision = auto_decision_for_task(task)
+            claim_record = task.get("claim")
+            if not isinstance(claim_record, Mapping):
+                raise TcaClientError("coordination task is missing claim record")
+            claim = claim_record.get("claim")
+            if not isinstance(claim, Mapping):
+                raise TcaClientError("coordination task claim record is missing claim")
+            claim_id = str(claim["claim_id"])
+            result = await call_tool(
+                mcp_url=mcp_url,
+                token=token,
+                name="submit_coordination_decision",
+                arguments={
+                    "project_id": project_id,
+                    "claim_id": claim_id,
+                    **decision,
+                },
+            )
+            event = {
+                "event": "decided",
+                "project_id": project_id,
+                "claim_id": claim_id,
+                "decision": decision,
+                "result": result,
+            }
+            processed.append(event)
+            print_json(event)
+        return {"processed": processed}
     if args.command == "approve":
         return await call_tool(
             mcp_url=mcp_url,

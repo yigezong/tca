@@ -5,6 +5,7 @@ from pathlib import Path
 
 from tca.client_cli import (
     ProjectConfig,
+    auto_decision_for_task,
     find_repo_root,
     load_dotenv,
     load_project_config,
@@ -55,3 +56,52 @@ def test_load_dotenv_preserves_existing_values(tmp_path: Path, monkeypatch) -> N
 
     assert os.environ["TCA_API_TOKEN"] == "existing-token"
     assert os.environ["TCA_AGENT_ID"] == "agent-a1"
+
+
+def test_auto_decision_approves_when_paths_do_not_overlap() -> None:
+    decision = auto_decision_for_task(
+        {
+            "claim": {
+                "claim": {
+                    "claim_id": "claim-1",
+                    "planned_paths": ["src/greeting.py"],
+                }
+            },
+            "active_claims": [
+                {
+                    "claim": {
+                        "claim_id": "claim-2",
+                        "planned_paths": ["docs/readme.md"],
+                    }
+                }
+            ],
+        }
+    )
+
+    assert decision["state"] == "approved"
+    assert decision["wait_for"] == []
+
+
+def test_auto_decision_waits_for_overlapping_active_claims() -> None:
+    decision = auto_decision_for_task(
+        {
+            "claim": {
+                "claim": {
+                    "claim_id": "claim-1",
+                    "planned_paths": ["src/greeting.py"],
+                }
+            },
+            "active_claims": [
+                {
+                    "claim": {
+                        "claim_id": "claim-2",
+                        "planned_paths": ["src/**"],
+                    }
+                }
+            ],
+        }
+    )
+
+    assert decision["state"] == "waiting"
+    assert decision["wait_for"] == ["claim-2"]
+    assert decision["conflicts_with"] == ["claim-2"]

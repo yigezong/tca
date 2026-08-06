@@ -66,7 +66,11 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
     ) -> dict[str, object]:
         """For A: wait until C finishes assessing a Claim or timeout expires."""
         deadline = time.monotonic() + max(0.0, timeout_seconds)
-        pending = {ClaimState.RECEIVED.value, ClaimState.ASSESSING.value}
+        pending = {
+            ClaimState.RECEIVED.value,
+            ClaimState.ASSESSING.value,
+            ClaimState.WAITING.value,
+        }
         while True:
             result = controller.get_claim_state(project_id, claim_id)
             if result["state"] not in pending or time.monotonic() >= deadline:

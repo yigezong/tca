@@ -90,7 +90,7 @@ sequenceDiagram
 |---|---|---|
 | `submit_claim(claim)` | A / adapter | 非 GitHub 场景直接提交 Claim |
 | `get_claim_state(project_id, claim_id)` | A | 查询权威状态、决策和允许动作 |
-| `wait_for_decision(project_id, claim_id)` | A | 等待 Claim 离开 `received` / `assessing` |
+| `wait_for_decision(project_id, claim_id)` | A | 等待 Claim 离开 `received` / `assessing` / `waiting` |
 | `start_execution(project_id, claim_id)` | A | 把已获批 Claim 转成 `executing` |
 | `complete_claim(project_id, claim_id)` | A | 把执行中的 Claim 转成 `completed` |
 | `get_coordination_task(project_id)` | M | 领取最早的待协调 Claim；`project_id` 可为空，表示所有项目 |
@@ -105,6 +105,7 @@ uv run --project ../proj_tca tca-client start <claim_id>
 uv run --project ../proj_tca tca-client complete <claim_id>
 
 uv run --project ../proj_tca tca-client task
+uv run --project ../proj_tca tca-client watch
 uv run --project ../proj_tca tca-client approve <claim_id>
 ```
 
@@ -120,7 +121,7 @@ GET /api/claims/<claim_id>?project_id=<owner/repo>
 
 ```text
 A 提交 Claim 后调用 wait_for_decision
-M 空闲时调用 wait_for_coordination_task
+M Runner 常驻调用 wait_for_coordination_task，或用 tca-client watch 包一层循环
 C 只在这些请求里返回最新状态或任务
 ```
 
@@ -326,7 +327,7 @@ templates/test-repo/.tca/claim.example.yaml
 - 没有自定义 Claim 分支前缀或 Claim 文件路径；V1 固定为 `tca/claim/<agent-id>/<claim-id>` 和 `.tca/claim.yaml`。
 - 没有 GitHub status check / CI 门禁。
 - 没有 TCA 主动唤醒 A/M；当前使用 `wait_for_decision` 和 `wait_for_coordination_task` 做 long-polling。
-- 没有内置 M Runner；M 是外部 Agent，通过 MCP 领取协调任务。
+- 没有产品级常驻 M 服务；当前只有 `tca-client watch` 这种轻量外部 runner。
 - 没有多用户 token、项目级权限、审计后台。
 - 没有从 `.tca/project.yaml` 自动生成 Codex / Claude / Cursor 原生 MCP 配置的接入命令。
 
