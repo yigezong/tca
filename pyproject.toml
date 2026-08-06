@@ -17,6 +17,7 @@ dependencies = [
 
 [project.scripts]
 tca-app = "tca.app:main"
+tca-client = "tca.client_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -1,8 +1,8 @@
 claim_id: example-claim
 project_id: replace-with-owner/repo
-author: agent-name
+author: replace-with-tca-agent-id
 base_commit: replace-with-commit-sha
-work_branch: feature/example-claim
+work_branch: feature/replace-with-tca-agent-id/example-claim
 goal: 用一句话描述本次工作的目标
 planned_paths:
   - src/example/**

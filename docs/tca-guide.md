@@ -97,6 +97,17 @@ sequenceDiagram
 | `wait_for_coordination_task(project_id)` | M | 等待待协调 Claim 出现，超时返回 `null` |
 | `submit_coordination_decision(project_id, claim_id, ...)` | M | 提交协调建议，由 C 校验并落库 |
 
+如果当前 Agent 客户端没有直接暴露 TCA MCP tool，可以用 TCA 包里的命令行客户端调用同一组 tool。它会从当前被测 repo 的 `.tca/project.yaml` 读取 `project_id` 和 MCP URL，并从 `.env` 或环境变量读取 token：
+
+```bash
+uv run --project ../proj_tca tca-client wait <claim_id>
+uv run --project ../proj_tca tca-client start <claim_id>
+uv run --project ../proj_tca tca-client complete <claim_id>
+
+uv run --project ../proj_tca tca-client task
+uv run --project ../proj_tca tca-client approve <claim_id>
+```
+
 Claim 的运行时身份是 `(project_id, claim_id)`。不同项目可以使用相同 `claim_id`，但 A/M 调用 Claim 相关 MCP tool 时必须带 `project_id`。
 
 HTTP 查询 Claim 状态时同样要带项目：
@@ -142,6 +153,7 @@ flowchart LR
 
     subgraph Agent["A / M 本机"]
       LocalToken["环境变量 TCA_API_TOKEN<br/>秘密：Agent 调 MCP 的 Bearer token"]
+      AgentId["环境变量 TCA_AGENT_ID<br/>本机稳定 Agent 身份"]
       Client["Codex / Agent MCP Client"]
     end
 
@@ -162,6 +174,7 @@ flowchart LR
     Project --> AgentCfg
     AgentCfg --> Client
     LocalToken --> Client
+    AgentId -->|"写入 Claim author / branch"| Claim
     Client -->|"Authorization: Bearer TCA_API_TOKEN"| App
     ApiToken -->|"校验 Bearer token"| App
     Hosts -->|"MCP transport security"| App
@@ -262,6 +275,8 @@ templates/test-repo/.tca/claim.example.yaml
 
 复制到被测 repo 后，替换 `.tca/project.yaml` 里的 `project_id`、`mcp.url` 等占位值。每个 A/M 工作区复制 `.env.example` 为 `.env` 并填入真实 `TCA_API_TOKEN`；真实 token 仍然只放在 Server 环境变量或成员本机环境变量里，不写进 Git。
 
+每个 A 工作区还要设置稳定的 `TCA_AGENT_ID`，例如 `agent-a1`、`agent-a2`。人类给 A 的 prompt 只需要描述业务目标；A 应从 `AGENTS.md` 自动执行 TCA Claim 流程。每个逻辑任务使用新的 `claim_id`，推荐 `<agent-id>-<task-slug>`；工作分支推荐 `feature/<agent-id>/<claim-id>`。
+
 ## 8. 当前文件地图
 
 根目录：
@@ -283,6 +298,7 @@ templates/test-repo/.tca/claim.example.yaml
 | 文件 | 作用 |
 |---|---|
 | `src/tca/app.py` | Starlette HTTP 应用，挂载 `/health`、`/api`、`/mcp`、`/webhooks/github` |
+| `src/tca/client_cli.py` | A/M 本机调用 TCA MCP 的轻量命令行客户端 |
 | `src/tca/controller.py` | Claim 状态机 |
 | `src/tca/domain.py` | Claim、Decision、状态枚举和 allowed_actions |
 | `src/tca/rules.py` | 基础规则检查 |
@@ -312,6 +328,6 @@ templates/test-repo/.tca/claim.example.yaml
 - 没有 TCA 主动唤醒 A/M；当前使用 `wait_for_decision` 和 `wait_for_coordination_task` 做 long-polling。
 - 没有内置 M Runner；M 是外部 Agent，通过 MCP 领取协调任务。
 - 没有多用户 token、项目级权限、审计后台。
-- 没有从 `.tca/project.yaml` 自动生成 Codex / Claude / Cursor 配置的接入命令。
+- 没有从 `.tca/project.yaml` 自动生成 Codex / Claude / Cursor 原生 MCP 配置的接入命令。
 
 如果后续实现这些能力，再把对应配置和流程写回文档。

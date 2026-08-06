@@ -15,7 +15,8 @@ A 和 M 都是 TCA Server 之外的客户端，都通过 MCP 与 C 交互。
 2. 在该分支提交 `.tca/claim.yaml`，说明目标、工作分支、预计路径和依赖。
 3. Push Claim 分支；Git provider webhook 调用 `/webhooks/github` 通知 C。
 4. 调用 `wait_for_decision(project_id, claim_id)`。只有 `allowed_actions` 包含 `start_execution` 时才能开始。
-5. 范围变化时停止越界修改，并通过 Claim 分支提交新版 `.tca/claim.yaml`；完成后调用 `complete_claim(project_id, claim_id)`。
+5. 调用 `start_execution(project_id, claim_id)` 后，从目标分支创建 `work_branch` 并修改代码。
+6. 范围变化时停止越界修改，并通过 Claim 分支提交新版 `.tca/claim.yaml`；完成后调用 `complete_claim(project_id, claim_id)`。
 
 ## M 的最短流程
 
@@ -31,6 +32,8 @@ Git provider 保存 Claim 和代码历史；TCA 状态数据库保存 C 的权�
 Claim 的运行时身份是 `(project_id, claim_id)`。不同项目可以使用相同 `claim_id`，但调用 Claim 相关 MCP tool 时必须传入 `.tca/project.yaml` 中的 `project_id`。
 
 GitHub Claim 分支命名为 `tca/claim/<agent-id>/<claim-id>`。`agent-id` 必须等于 `.tca/claim.yaml` 的 `author`，`claim-id` 必须等于 `.tca/claim.yaml` 的 `claim_id`。每个逻辑任务使用新的 `claim_id`；同一个 Claim 需要补充范围时复用同一分支并递增 `version`。
+
+`agent-id` 是每个 Agent 工作区的稳定身份，推荐从本机环境变量 `TCA_AGENT_ID` 读取。`work_branch` 推荐使用 `feature/<agent-id>/<claim-id>`，避免不同 Agent 的工作分支互相覆盖。
 
 如果 MCP 不可连接、Claim 状态不明确或所需操作不在 `allowed_actions` 中，Agent 必须停止共享范围修改并向人报告。
 
@@ -50,6 +53,17 @@ cp .env.example .env
 
 ```text
 TCA_API_TOKEN=...
+TCA_AGENT_ID=agent-a1
 ```
 
 `.env` 必须被 `.gitignore` 忽略，不得提交。
+
+如果当前 Agent 客户端没有直接暴露 TCA MCP tool，可使用 TCA 包提供的客户端命令：
+
+```bash
+uv run --project ../proj_tca tca-client task
+uv run --project ../proj_tca tca-client approve <claim_id>
+uv run --project ../proj_tca tca-client wait <claim_id>
+uv run --project ../proj_tca tca-client start <claim_id>
+uv run --project ../proj_tca tca-client complete <claim_id>
+```
