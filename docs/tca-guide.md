@@ -77,21 +77,18 @@ sequenceDiagram
 
 文本版流程：
 
-1. A 在被测 repo 创建 `tca/claim/<claim-id>` 分支。
-2. A 在该分支提交 `.tca/claim.yaml`。
-3. A push Claim 分支到 Git provider。
-4. Git provider webhook 通知 TCA Server。
-5. C 校验 webhook 签名，读取远端 repo 上的 `.tca/claim.yaml`，写入数据库。
-6. C 进入 `assessing`，并把任务放入 M 的协调队列。
-7. M 通过 MCP 领取任务，提交 `approved`、`approved_with_constraints`、`waiting`、`blocked` 或 `needs_human`。
-8. C 校验 M 的建议并更新状态。
-9. A 通过 MCP 读取状态；只有 `allowed_actions` 包含 `start_execution` 才开始修改共享代码。
-10. A 开始前调用 `start_execution`，完成后调用 `complete_claim`。
+1. A 先提交 Claim。普通 GitHub 被测 repo 走 `tca/claim/<claim-id>` 分支和 `.tca/claim.yaml`；CooperBench 这类非 GitHub git server 可以走 MCP `submit_claim`。
+2. C 写入 Claim，进入 `assessing`，并把任务放入 M 的协调队列。
+3. M 通过 MCP 领取任务，提交 `approved`、`approved_with_constraints`、`waiting`、`blocked` 或 `needs_human`。
+4. C 校验 M 的建议并更新状态。
+5. A 通过 MCP 读取状态；只有 `allowed_actions` 包含 `start_execution` 才开始修改共享代码。
+6. A 开始前调用 `start_execution`，完成后调用 `complete_claim`。
 
 当前 MCP tools 是：
 
 | Tool | 使用方 | 作用 |
 |---|---|---|
+| `submit_claim(claim)` | A / adapter | 非 GitHub 场景直接提交 Claim |
 | `get_claim_state(project_id, claim_id)` | A | 查询权威状态、决策和允许动作 |
 | `wait_for_decision(project_id, claim_id)` | A | 等待 Claim 离开 `received` / `assessing` |
 | `start_execution(project_id, claim_id)` | A | 把已获批 Claim 转成 `executing` |
@@ -139,6 +136,7 @@ flowchart LR
     subgraph TestedRepo["被测 repo：可提交到 Git"]
       Project[".tca/project.yaml<br/>公开：project_id、mcp.url、token_env"]
       Claim["tca/claim/* 分支<br/>.tca/claim.yaml"]
+      DirectClaim["可选：MCP submit_claim<br/>CooperBench 等非 GitHub 场景"]
       AgentCfg["可选 Agent 适配配置<br/>例如 Codex MCP URL + bearer_token_env_var"]
     end
 
@@ -168,6 +166,7 @@ flowchart LR
     ApiToken -->|"校验 Bearer token"| App
     Hosts -->|"MCP transport security"| App
 
+    DirectClaim -->|"MCP"| Client
     Claim -->|"push"| Webhook
     WebhookSecret -->|"签名请求"| Webhook
     Webhook -->|"POST + x-hub-signature-256"| App
@@ -230,13 +229,15 @@ GITHUB_WEBHOOK_SECRET=replace-with-webhook-secret
 GITHUB_TOKEN=replace-with-github-token
 ```
 
-Claim 入口当前直接规定，不再暴露成环境变量：
+GitHub Claim 入口当前直接规定，不再暴露成环境变量：
 
 ```text
 Claim 分支：tca/claim/<claim-id>
 Claim 文件：.tca/claim.yaml
 GitHub API：https://api.github.com
 ```
+
+CooperBench 这类非 GitHub git server 不走 `/webhooks/github`，由 adapter 通过 MCP `submit_claim` 直接提交同一份 Claim 数据。
 
 `/health` 不需要 token。`/mcp` 和 `/api/*` 需要：
 
@@ -249,13 +250,15 @@ Authorization: Bearer <TCA_API_TOKEN>
 被测 repo 需要提交公开协议文件。本仓库只提供模板，不在 TCA 本体根目录启用它们。
 
 ```text
+templates/test-repo/.env.example
+templates/test-repo/.gitignore
 templates/test-repo/AGENTS.md
 templates/test-repo/.tca/protocol.md
 templates/test-repo/.tca/project.yaml
 templates/test-repo/.tca/claim.example.yaml
 ```
 
-复制到被测 repo 后，替换 `.tca/project.yaml` 里的 `project_id`、`mcp.url` 等占位值。真实 token 仍然放在 Server 环境变量或成员本机环境变量里，不写进 Git。
+复制到被测 repo 后，替换 `.tca/project.yaml` 里的 `project_id`、`mcp.url` 等占位值。每个 A/M 工作区复制 `.env.example` 为 `.env` 并填入真实 `TCA_API_TOKEN`；真实 token 仍然只放在 Server 环境变量或成员本机环境变量里，不写进 Git。
 
 ## 8. 当前文件地图
 

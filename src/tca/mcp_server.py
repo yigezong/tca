@@ -8,13 +8,13 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 from .controller import Controller
-from .domain import ClaimState, Decision
+from .domain import Claim, ClaimState, Decision
 from .rules import BasicRuleChecker
 from .store import build_store
 
 INSTRUCTIONS = """
 TCA coordinates coding-agent work in Git-enabled projects.
-A: after publishing a Claim branch, call wait_for_decision before shared code changes.
+A: after publishing or submitting a Claim, call wait_for_decision before shared code changes.
 A: only start when allowed_actions includes start_execution; call complete_claim when done.
 M: use wait_for_coordination_task or get_coordination_task, then submit_coordination_decision.
 The Controller is authoritative; A and M must not infer state from local memory.
@@ -46,6 +46,11 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
         json_response=True,
         transport_security=TransportSecuritySettings(allowed_hosts=allowed_hosts),
     )
+
+    @mcp.tool()
+    def submit_claim(claim: dict[str, object]) -> dict[str, object]:
+        """For A/adapters: submit a Claim directly when no Git provider webhook exists."""
+        return controller.submit_claim(Claim.from_mapping(claim)).to_mapping()
 
     @mcp.tool()
     def get_claim_state(project_id: str, claim_id: str) -> dict[str, object]:

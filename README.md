@@ -7,8 +7,8 @@ Team Code Agent（TCA）是一个 Git-first 的多 Agent 协作控制服务。�
 ## 架构
 
 ```text
-A / M Agent ── MCP ──┐
-                     ▼
+A / M Agent ── MCP ───────┐
+                          ▼
 Git provider ─ webhook ─► TCA Server / C ─► 状态数据库
 ```
 
@@ -16,6 +16,7 @@ Git provider ─ webhook ─► TCA Server / C ─► 状态数据库
 - A 是开发 Agent，通过 MCP 查询状态、开始执行和完成任务。
 - M 是外部协调 Agent，通过 MCP 领取 Claim 并提交协调建议。
 - Git provider 保存 Claim 分支和 Claim 文件；当前代码包含 GitHub adapter。
+- 非 GitHub 场景可以通过 MCP `submit_claim` 直接提交 Claim。
 - 状态数据库本地可用 SQLite，部署使用 Postgres。
 
 ## 本地开发

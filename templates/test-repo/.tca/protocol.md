@@ -37,3 +37,17 @@ Claim 的运行时身份是 `(project_id, claim_id)`。不同项目可以使用�
 ## 凭证
 
 公网 TCA 使用 Bearer Token。仓库只保存服务地址和 Token 环境变量名；每位成员在本机安全地提供 `TCA_API_TOKEN`，不得提交凭证。
+
+每个 A/M 工作区都需要自己的本地运行环境配置。可复制仓库根目录的 `.env.example` 为 `.env`：
+
+```bash
+cp .env.example .env
+```
+
+然后填入真实 token：
+
+```text
+TCA_API_TOKEN=...
+```
+
+`.env` 必须被 `.gitignore` 忽略，不得提交。

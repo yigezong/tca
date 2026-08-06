@@ -31,6 +31,19 @@ async def test_mcp_exposes_wait_for_coordination_task() -> None:
     tools = await mcp.list_tools()
 
     assert "wait_for_coordination_task" in {tool.name for tool in tools}
+    assert "submit_claim" in {tool.name for tool in tools}
+
+
+@pytest.mark.anyio
+async def test_submit_claim_accepts_direct_claim() -> None:
+    mcp, _ = make_mcp()
+    claim = make_claim("claim-1").to_mapping()
+
+    _, result = await mcp.call_tool("submit_claim", {"claim": claim})
+
+    assert result["claim"]["project_id"] == "team/project"
+    assert result["claim"]["claim_id"] == "claim-1"
+    assert result["state"] in {"approved", "assessing"}
 
 
 @pytest.mark.anyio
