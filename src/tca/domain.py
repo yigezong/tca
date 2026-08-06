@@ -142,14 +142,11 @@ def allowed_actions(state: ClaimState) -> tuple[str, ...]:
     return {
         ClaimState.RECEIVED: (),
         ClaimState.ASSESSING: ("get_claim_state",),
-        ClaimState.APPROVED: ("start_execution", "amend_claim"),
-        ClaimState.APPROVED_WITH_CONSTRAINTS: (
-            "start_execution",
-            "amend_claim",
-        ),
-        ClaimState.WAITING: ("get_claim_state", "amend_claim"),
-        ClaimState.NEEDS_HUMAN: ("get_claim_state", "amend_claim"),
-        ClaimState.BLOCKED: ("get_claim_state", "amend_claim"),
-        ClaimState.EXECUTING: ("amend_claim", "complete_claim"),
+        ClaimState.APPROVED: ("start_execution",),
+        ClaimState.APPROVED_WITH_CONSTRAINTS: ("start_execution",),
+        ClaimState.WAITING: ("get_claim_state",),
+        ClaimState.NEEDS_HUMAN: ("get_claim_state",),
+        ClaimState.BLOCKED: ("get_claim_state",),
+        ClaimState.EXECUTING: ("complete_claim",),
         ClaimState.COMPLETED: (),
     }[state]

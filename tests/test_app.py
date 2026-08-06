@@ -24,7 +24,14 @@ def make_app(token: str = "secret"):
     return BearerAuthMiddleware(app, token)
 
 
-def request_status(app, path: str, *, method: str = "GET", token: str = "") -> int:
+def request_status(
+    app,
+    path: str,
+    *,
+    method: str = "GET",
+    token: str = "",
+    query_string: bytes = b"",
+) -> int:
     async def call() -> int:
         messages = []
 
@@ -45,7 +52,7 @@ def request_status(app, path: str, *, method: str = "GET", token: str = "") -> i
             "scheme": "http",
             "path": path,
             "raw_path": path.encode(),
-            "query_string": b"",
+            "query_string": query_string,
             "headers": headers,
             "client": ("testclient", 50000),
             "server": ("testserver", 80),
@@ -78,3 +85,22 @@ def test_app_requires_api_token(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="TCA_API_TOKEN"):
         create_app()
+
+
+def test_claim_api_requires_project_id(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TCA_API_TOKEN", "secret")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    app = create_app()
+
+    assert request_status(app, "/api/claims/missing", token="secret") == 400
+    assert (
+        request_status(
+            app,
+            "/api/claims/missing",
+            token="secret",
+            query_string=b"project_id=team%2Fproject",
+        )
+        == 404
+    )

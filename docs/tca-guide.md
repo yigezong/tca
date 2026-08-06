@@ -67,12 +67,12 @@ sequenceDiagram
     C->>DB: 写入 coordination_tasks，等待 M
     M->>C: get_coordination_task(project_id)
     C-->>M: Claim + active_claims
-    M->>C: submit_coordination_decision(...)
+    M->>C: submit_coordination_decision(project_id, claim_id, ...)
     C->>DB: 保存 approved / approved_with_constraints / waiting / blocked / needs_human
-    A->>C: wait_for_decision / get_claim_state
+    A->>C: wait_for_decision(project_id, claim_id) / get_claim_state(project_id, claim_id)
     C-->>A: state + decision + allowed_actions
-    A->>C: start_execution
-    A->>C: complete_claim
+    A->>C: start_execution(project_id, claim_id)
+    A->>C: complete_claim(project_id, claim_id)
 ```
 
 文本版流程：
@@ -92,12 +92,31 @@ sequenceDiagram
 
 | Tool | 使用方 | 作用 |
 |---|---|---|
-| `get_claim_state` | A | 查询权威状态、决策和允许动作 |
-| `wait_for_decision` | A | 等待 Claim 离开 `received` / `assessing` |
-| `start_execution` | A | 把已获批 Claim 转成 `executing` |
-| `complete_claim` | A | 把执行中的 Claim 转成 `completed` |
-| `get_coordination_task` | M | 领取最早的待协调 Claim |
-| `submit_coordination_decision` | M | 提交协调建议，由 C 校验并落库 |
+| `get_claim_state(project_id, claim_id)` | A | 查询权威状态、决策和允许动作 |
+| `wait_for_decision(project_id, claim_id)` | A | 等待 Claim 离开 `received` / `assessing` |
+| `start_execution(project_id, claim_id)` | A | 把已获批 Claim 转成 `executing` |
+| `complete_claim(project_id, claim_id)` | A | 把执行中的 Claim 转成 `completed` |
+| `get_coordination_task(project_id)` | M | 领取最早的待协调 Claim；`project_id` 可为空，表示所有项目 |
+| `wait_for_coordination_task(project_id)` | M | 等待待协调 Claim 出现，超时返回 `null` |
+| `submit_coordination_decision(project_id, claim_id, ...)` | M | 提交协调建议，由 C 校验并落库 |
+
+Claim 的运行时身份是 `(project_id, claim_id)`。不同项目可以使用相同 `claim_id`，但 A/M 调用 Claim 相关 MCP tool 时必须带 `project_id`。
+
+HTTP 查询 Claim 状态时同样要带项目：
+
+```text
+GET /api/claims/<claim_id>?project_id=<owner/repo>
+```
+
+当前通知模式是 long-polling，不是 TCA 主动唤醒 A/M：
+
+```text
+A 提交 Claim 后调用 wait_for_decision
+M 空闲时调用 wait_for_coordination_task
+C 只在这些请求里返回最新状态或任务
+```
+
+也就是说，A/M 都要主动连接 TCA。当前没有 callback、队列订阅、Codex task 唤醒或 server-initiated MCP notification。
 
 ## 4. 配置分层
 
@@ -285,6 +304,7 @@ templates/test-repo/.tca/claim.example.yaml
 - 没有 `.tca/agreements/` 模板目录。
 - 没有自定义 Claim 分支前缀或 Claim 文件路径；V1 固定为 `tca/claim/*` 和 `.tca/claim.yaml`。
 - 没有 GitHub status check / CI 门禁。
+- 没有 TCA 主动唤醒 A/M；当前使用 `wait_for_decision` 和 `wait_for_coordination_task` 做 long-polling。
 - 没有内置 M Runner；M 是外部 Agent，通过 MCP 领取协调任务。
 - 没有多用户 token、项目级权限、审计后台。
 - 没有从 `.tca/project.yaml` 自动生成 Codex / Claude / Cursor 配置的接入命令。

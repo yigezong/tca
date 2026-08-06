@@ -76,8 +76,13 @@ def create_app():
         return JSONResponse({"status": "ok", "store": backend})
 
     async def get_claim(request: Request) -> JSONResponse:
+        project_id = request.query_params.get("project_id", "")
+        if not project_id:
+            return JSONResponse({"error": "project_id is required"}, status_code=400)
         try:
-            return JSONResponse(controller.get_claim_state(request.path_params["claim_id"]))
+            return JSONResponse(
+                controller.get_claim_state(project_id, request.path_params["claim_id"])
+            )
         except KeyError:
             return JSONResponse({"error": "claim not found"}, status_code=404)
 

@@ -16,7 +16,7 @@ INSTRUCTIONS = """
 TCA coordinates coding-agent work in Git-enabled projects.
 A: after publishing a Claim branch, call wait_for_decision before shared code changes.
 A: only start when allowed_actions includes start_execution; call complete_claim when done.
-M: use get_coordination_task and submit_coordination_decision.
+M: use wait_for_coordination_task or get_coordination_task, then submit_coordination_decision.
 The Controller is authoritative; A and M must not infer state from local memory.
 """.strip()
 
@@ -48,32 +48,35 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
     )
 
     @mcp.tool()
-    def get_claim_state(claim_id: str) -> dict[str, object]:
+    def get_claim_state(project_id: str, claim_id: str) -> dict[str, object]:
         """For A: get authoritative state, constraints, and allowed actions."""
-        return controller.get_claim_state(claim_id)
+        return controller.get_claim_state(project_id, claim_id)
 
     @mcp.tool()
     async def wait_for_decision(
-        claim_id: str, timeout_seconds: float = 30.0, poll_seconds: float = 0.25
+        project_id: str,
+        claim_id: str,
+        timeout_seconds: float = 30.0,
+        poll_seconds: float = 0.25,
     ) -> dict[str, object]:
         """For A: wait until C finishes assessing a Claim or timeout expires."""
         deadline = time.monotonic() + max(0.0, timeout_seconds)
         pending = {ClaimState.RECEIVED.value, ClaimState.ASSESSING.value}
         while True:
-            result = controller.get_claim_state(claim_id)
+            result = controller.get_claim_state(project_id, claim_id)
             if result["state"] not in pending or time.monotonic() >= deadline:
                 return result
             await asyncio.sleep(max(0.05, poll_seconds))
 
     @mcp.tool()
-    def start_execution(claim_id: str) -> dict[str, object]:
+    def start_execution(project_id: str, claim_id: str) -> dict[str, object]:
         """For A: move an approved Claim to executing before shared changes."""
-        return controller.start_execution(claim_id).to_mapping()
+        return controller.start_execution(project_id, claim_id).to_mapping()
 
     @mcp.tool()
-    def complete_claim(claim_id: str) -> dict[str, object]:
+    def complete_claim(project_id: str, claim_id: str) -> dict[str, object]:
         """For A: complete executing work and trigger dependent reevaluation."""
-        return controller.complete_claim(claim_id).to_mapping()
+        return controller.complete_claim(project_id, claim_id).to_mapping()
 
     @mcp.tool()
     def get_coordination_task(project_id: str = "") -> dict[str, object] | None:
@@ -82,7 +85,22 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
         return task.to_mapping() if task else None
 
     @mcp.tool()
+    async def wait_for_coordination_task(
+        project_id: str = "",
+        timeout_seconds: float = 30.0,
+        poll_seconds: float = 0.25,
+    ) -> dict[str, object] | None:
+        """For M: wait until a coordination task is available or timeout expires."""
+        deadline = time.monotonic() + max(0.0, timeout_seconds)
+        while True:
+            task = controller.get_coordination_task(project_id or None)
+            if task is not None or time.monotonic() >= deadline:
+                return task.to_mapping() if task else None
+            await asyncio.sleep(max(0.05, poll_seconds))
+
+    @mcp.tool()
     def submit_coordination_decision(
+        project_id: str,
         claim_id: str,
         state: str,
         reason: str,
@@ -100,6 +118,8 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
                 "conflicts_with": conflicts_with or [],
             }
         )
-        return controller.submit_coordination_decision(claim_id, decision).to_mapping()
+        return controller.submit_coordination_decision(
+            project_id, claim_id, decision
+        ).to_mapping()
 
     return mcp

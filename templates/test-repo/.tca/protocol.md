@@ -14,21 +14,25 @@ A 和 M 都是 TCA Server 之外的客户端，都通过 MCP 与 C 交互。
 1. 从最新目标分支创建 `tca/claim/<claim-id>` 分支。
 2. 在该分支提交 `.tca/claim.yaml`，说明目标、工作分支、预计路径和依赖。
 3. Push Claim 分支；Git provider webhook 调用 `/webhooks/github` 通知 C。
-4. 调用 `wait_for_decision`。只有 `allowed_actions` 包含 `start_execution` 时才能开始。
-5. 范围变化时停止越界修改，并通过 Claim 分支提交新版 `.tca/claim.yaml`；完成后调用 `complete_claim`。
+4. 调用 `wait_for_decision(project_id, claim_id)`。只有 `allowed_actions` 包含 `start_execution` 时才能开始。
+5. 范围变化时停止越界修改，并通过 Claim 分支提交新版 `.tca/claim.yaml`；完成后调用 `complete_claim(project_id, claim_id)`。
 
 ## M 的最短流程
 
-1. 调用 `get_coordination_task` 获取待协调 Claim 和当前活跃 Claim。
+1. 调用 `wait_for_coordination_task(project_id)` 等待待协调 Claim；或用 `get_coordination_task(project_id)` 做单次检查。
 2. 判断语义冲突、依赖、约束及是否需要人类。
-3. 调用 `submit_coordination_decision` 提交建议。
+3. 调用 `submit_coordination_decision(project_id, claim_id, ...)` 提交建议。
 4. C 校验建议；M 不能直接把 Claim 变为 `executing` 或 `completed`。
 
 ## 状态权威
 
 Git provider 保存 Claim 和代码历史；TCA 状态数据库保存 C 的权威运行状态。A 通过 MCP 读取 Decision。MCP 是 A、M 与 C 的通信接口。只有 C 可以执行状态转换。
 
+Claim 的运行时身份是 `(project_id, claim_id)`。不同项目可以使用相同 `claim_id`，但调用 Claim 相关 MCP tool 时必须传入 `.tca/project.yaml` 中的 `project_id`。
+
 如果 MCP 不可连接、Claim 状态不明确或所需操作不在 `allowed_actions` 中，Agent 必须停止共享范围修改并向人报告。
+
+当前协议使用 long-polling。TCA 不主动唤醒 A/M；A 使用 `wait_for_decision` 等待决策，M 使用 `wait_for_coordination_task` 等待协调任务。
 
 ## 凭证
 
