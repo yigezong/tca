@@ -6,7 +6,7 @@
 
 1. 阅读 `.tca/protocol.md`。
 2. 读取 `.tca/project.yaml`，确认项目标识、TCA MCP 地址和 `token_env`。
-3. 从本机环境或 `.env` 读取 `TCA_API_TOKEN` 和稳定的 `TCA_AGENT_ID`；`.env` 不得提交。
+3. 从本机环境或 `.env` 读取 `TCA_API_TOKEN` 和稳定的 `TCA_AGENT_ID`；`.env` 不得提交，也不要输出 `TCA_API_TOKEN` 的值。只需要读取身份时，可用 `sed -n 's/^TCA_AGENT_ID=//p' .env`。
 4. 为每个人类需求生成新的 `claim_id`，建议格式为 `<TCA_AGENT_ID>-<task-slug>`。
 5. 修改共享代码前，通过 Git 分支 `tca/claim/<TCA_AGENT_ID>/<claim_id>` 发布 `.tca/claim.yaml`。
 6. `author` 必须等于 `TCA_AGENT_ID`，`work_branch` 建议使用 `feature/<TCA_AGENT_ID>/<claim_id>`。
