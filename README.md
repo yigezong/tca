@@ -73,11 +73,9 @@ TCA_API_TOKEN=...
 TCA_AGENT_ID=agent-a1
 ```
 
-M 可以在任意本机目录运行，不需要被测 repo checkout：
+M 做路径级判断时可以只连 TCA MCP；M 做语义判断时，推荐直接运行在自己管理的被测 repo checkout 根目录。`project_id` 和 MCP URL 从该 repo 的 `.tca/project.yaml` 读取，本机只提供 token：
 
 ```bash
-TCA_MCP_URL=https://tca.example.com/mcp
-TCA_PROJECT_ID=owner/repo
 TCA_API_TOKEN=...
 ```
 

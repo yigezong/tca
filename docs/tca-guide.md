@@ -89,7 +89,7 @@ M 的流程：
 
 当前 smoke M 只是轻量 runner。它做的是路径级自动判断，不是完整语义审查。更复杂的 M 可以在同一个 MCP 协议上实现。
 
-M 不需要 TCA Server 源码，但不能凭空做语义判断。`wait_for_coordination_task` 返回 Claim 元数据和 active claims，足够判断“计划路径是否重叠、依赖是否还没完成”。如果要判断“两个目标语义上是否冲突、某个路径修改风险多大”，M 还需要 repo 上下文。正式方案可以二选一：
+M 不需要 TCA Server 源码，但不能凭空做语义判断。`wait_for_coordination_task` 返回 Claim 元数据和 active claims，足够判断“计划路径是否重叠、依赖是否还没完成”。如果要判断“两个目标语义上是否冲突、某个路径修改风险多大”，M 还需要 repo 上下文。正式方案有三种：
 
 | M 上下文来源 | 适合场景 | 边界 |
 |---|---|---|
@@ -235,15 +235,13 @@ A 的客户端必须能看到 TCA MCP tools。看不到时不要开始改共享�
 
 ### M 本机
 
-M 不需要 TCA Server 源码 checkout。M 的 Agent 客户端要能通过原生 MCP 连接 TCA Server，并知道要 watch 哪个 `project_id`。
+M 不需要 TCA Server 源码 checkout。推荐让 M 自己 clone 一份被测 repo，并直接以这个 repo 根目录作为 M task 的工作目录。这样 M 要看代码上下文时读当前目录就行，不需要额外路径变量。`project_id` 和 MCP URL 从当前 repo 的 `.tca/project.yaml` 读取。
 
 ```bash
-TCA_MCP_URL=https://tca.example.com/mcp
-TCA_PROJECT_ID=owner/repo
 TCA_API_TOKEN=...
 ```
 
-如果 M 只做路径级判断，可以只看 `wait_for_coordination_task` 返回的 Claim 元数据。如果 M 要做语义判断，给它一个被测 repo 的只读上下文；最简单是让 M 自己 clone 一份 read-only checkout，或者让它用 Git provider read-only token 读文件和提交历史。不要让 M 复用 A 的工作区，因为 A 的工作区会有未完成修改、分支切换和测试副产物。
+如果 M 只做路径级判断，可以只看 `wait_for_coordination_task` 返回的 Claim 元数据。如果 M 要做语义判断，就在自己的 repo checkout 里读文件、看 commit、比较 active claims 的目标和路径。不要让 M 复用 A 的工作区，因为 A 的工作区会有未完成修改、分支切换和测试副产物。
 
 真实 M 的循环是 MCP tool 调用，不是 shell 命令：
 
@@ -252,11 +250,7 @@ TCA_API_TOKEN=...
 3. 调 `submit_coordination_decision(...)` 提交判断。
 4. 继续等下一条。
 
-本仓库维护者做 smoke test 时，可以临时用仓库内置 CLI：
-
-```bash
-uv run --project /path/to/proj_tca tca-client watch
-```
+本仓库维护者做 smoke test 时，当前还可以临时用仓库内置 CLI 充当 MCP 客户端；正式 smoke 应该让 M task 直接使用客户端原生 MCP tools。
 
 ### Long-poll 和主动唤醒
 
