@@ -10,7 +10,7 @@ TCA 是一个 Git-first 的多 Agent 协作控制服务。它不替代 Git、PR 
 |---|---|---|
 | C / Controller | TCA Server，通常部署在 Vercel | 维护 Claim 状态机、校验状态转换、保存协调队列 |
 | A / 开发 Agent | 用户本机、Codex task、CI worker | 提交 Claim，等 C 放行，执行代码修改，完成 Claim |
-| M / 协调 Agent | 用户本机或团队机器，不默认云上常驻 | 领取待协调 Claim，判断冲突/依赖/风险，向 C 提交建议 |
+| M / 协调 Agent | 用户本机或团队机器，不默认云上常驻 | 领取待协调 Claim，结合 Claim 元数据和 repo 只读上下文判断冲突/依赖/风险，向 C 提交建议 |
 | P / 人 | 人 | 提出目标，在机器无法自动裁决时决策 |
 | Git provider | GitHub 等 | 保存 Claim 分支、工作分支和代码历史 |
 
@@ -88,6 +88,16 @@ M 的流程：
 真实用户不需要 checkout 本仓库。A/M 应使用 Codex、Claude、Cursor 等客户端的原生 MCP 配置，直接连接 TCA Server 的 `/mcp`。本仓库里的 `tca-client` 只是维护者本地开发和 smoke test 的辅助命令，不是正式用户流程的一部分。
 
 当前 smoke M 只是轻量 runner。它做的是路径级自动判断，不是完整语义审查。更复杂的 M 可以在同一个 MCP 协议上实现。
+
+M 不需要 TCA Server 源码，但不能凭空做语义判断。`wait_for_coordination_task` 返回 Claim 元数据和 active claims，足够判断“计划路径是否重叠、依赖是否还没完成”。如果要判断“两个目标语义上是否冲突、某个路径修改风险多大”，M 还需要 repo 上下文。正式方案可以二选一：
+
+| M 上下文来源 | 适合场景 | 边界 |
+|---|---|---|
+| 本地只读 checkout | 本机/团队机器常驻 M | M 可以读文件、看 commit、看历史，但不写业务 repo |
+| Git provider 只读访问 | M 不想保存 checkout | M 通过 GitHub/GitLab API 读 `base_commit`、路径和历史 |
+| TCA Server 提供上下文摘要 | 以后做托管 M 或轻客户端 | 需要扩展 C 的 API，把必要文件片段/diff 安全地给 M |
+
+现在的实现只提供前两层的接口基础，没有把 repo 文件内容塞进 TCA 状态机。这样保持 C 轻量，也避免把代码库内容长期存进 TCA 数据库。
 
 C 在 M 之前还有一层确定性路径规则：如果新 Claim 的 `planned_paths` 已经和 active Claim 重叠，C 会直接把它放到 `waiting`，暂时不生成 M task。等阻塞 Claim 完成后，C 再重新评估这个等待中的 Claim；如果硬冲突消失，它才会进入 M 队列。
 
@@ -225,13 +235,15 @@ A 的客户端必须能看到 TCA MCP tools。看不到时不要开始改共享�
 
 ### M 本机
 
-M 不需要被测 repo checkout，也不需要 TCA Server 源码 checkout。M 的 Agent 客户端只要能通过原生 MCP 连接 TCA Server，并知道要 watch 哪个 `project_id`。
+M 不需要 TCA Server 源码 checkout。M 的 Agent 客户端要能通过原生 MCP 连接 TCA Server，并知道要 watch 哪个 `project_id`。
 
 ```bash
 TCA_MCP_URL=https://tca.example.com/mcp
 TCA_PROJECT_ID=owner/repo
 TCA_API_TOKEN=...
 ```
+
+如果 M 只做路径级判断，可以只看 `wait_for_coordination_task` 返回的 Claim 元数据。如果 M 要做语义判断，给它一个被测 repo 的只读上下文；最简单是同一台机器上的 read-only checkout，或者让它用 Git provider read-only token 读文件和提交历史。
 
 真实 M 的循环是 MCP tool 调用，不是 shell 命令：
 

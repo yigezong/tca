@@ -83,4 +83,6 @@ TCA_API_TOKEN=...
 
 真实用户不需要 checkout 本仓库。A/M 使用 Codex、Claude、Cursor 等客户端的原生 MCP 配置，直接连接 `https://tca.example.com/mcp`。本仓库自带的 `tca-client` 只是维护者本地开发和 smoke test 的辅助命令。
 
+M 不需要 TCA Server 源码；但如果 M 要做语义判断，它需要被测 repo 的只读上下文，例如本地只读 checkout 或 Git provider 只读访问。只靠 TCA 返回的 Claim 元数据，只适合做路径级和依赖级判断。
+
 完整原理和操作手册见 [docs/tca-guide.md](docs/tca-guide.md)。

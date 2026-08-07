@@ -18,4 +18,4 @@ C 返回的状态是唯一权威状态，不得依据本地上下文自行推断
 
 如果当前 Agent 客户端没有暴露 TCA MCP tools，说明这个工作区还没有正确接入 TCA。此时必须停止共享代码修改并向人报告，不能假设本机存在 TCA Server 源码仓库或使用 `../proj_tca` 之类的维护者路径。
 
-M 是外部 Agent，不在被测 repo 工作区里假扮开发者。M 在自己的运行环境里通过原生 MCP 连接 TCA Server，持续调用 `wait_for_coordination_task` 领取协调任务并提交建议，不能直接修改 TCA 数据库或强制改变状态。
+M 是外部 Agent，不在被测 repo 工作区里假扮开发者。M 在自己的运行环境里通过原生 MCP 连接 TCA Server，持续调用 `wait_for_coordination_task` 领取协调任务并提交建议，不能直接修改 TCA 数据库或强制改变状态。M 做语义判断时需要被测 repo 的只读上下文；如果它只有 Claim 元数据，就只能做路径级/依赖级判断。
