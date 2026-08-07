@@ -29,7 +29,7 @@ flowchart LR
     subgraph Server["TCA Server / C"]
       Webhook["POST /webhooks/github"] --> Controller["Controller"]
       MCP["/mcp"] --> Controller
-      API["/api"] --> Controller
+      DebugAPI["GET /api/claims 调试查询"] -.-> Controller
       Controller <--> DB["Postgres / SQLite"]
     end
 
@@ -75,15 +75,25 @@ A 的流程：
 6. 从目标分支创建 `work_branch`，修改代码，提交并 push `work_branch`。
 7. 工作分支已保存到 Git provider 后，调用 `complete_claim`。
 
+`complete_claim` 只表示“这个 Claim 的工作分支已经完成并推到 Git provider”。它不表示代码已经进入 `main`。进入 `main` 仍然要走团队自己的 PR、merge、CI 或人工集成流程。TCA 负责减少同时改同一片共享代码的混乱，但不替代最终产品取舍：如果两个 completed 分支最终给出互斥结果，Git merge 仍然会冲突，需要人或集成器选择。
+
 M 的流程：
 
 1. 本机启动 `tca-client watch`。
 2. watch 循环调用 `wait_for_coordination_task(project_id)`。
-3. 如果发现 active Claim 路径冲突，提交 `waiting`。
-4. 如果没有 active 路径冲突，提交 `approved`。
+3. 如果 C 把一个 Claim 交给 M，M 根据 active Claim、语义冲突和风险提交决策。
+4. 当前轻量 M 没有语义模型：没有 active 路径冲突时提交 `approved`，发现冲突时提交 `waiting`。
 5. 处理完一条后继续等下一条。
 
-当前 `tca-client watch` 只是轻量 runner。它做的是路径级自动判断，不是完整语义审查。更复杂的 M 可以在同一个 MCP 协议上实现。
+`tca-client` 是本仓库 Python 包提供的命令行客户端，对应 `pyproject.toml` 里的 script。开发时不需要单独安装，可以直接用：
+
+```bash
+uv run --project /path/to/proj_tca tca-client watch
+```
+
+也可以以后发布成包后用 `uv tool install` 或 `pipx install` 安装。当前 `tca-client watch` 只是轻量 runner。它做的是路径级自动判断，不是完整语义审查。更复杂的 M 可以在同一个 MCP 协议上实现。
+
+C 在 M 之前还有一层确定性路径规则：如果新 Claim 的 `planned_paths` 已经和 active Claim 重叠，C 会直接把它放到 `waiting`，暂时不生成 M task。等阻塞 Claim 完成后，C 再重新评估这个等待中的 Claim；如果硬冲突消失，它才会进入 M 队列。
 
 ## 3. 状态机
 
@@ -110,6 +120,10 @@ Claim 的身份是 `(project_id, claim_id)`。不同项目可以复用同一个 
 - M 不能把 Claim 直接改为 `executing` 或 `completed`。
 - A 没有 `start_execution` 权限时必须停止修改共享代码。
 
+`waiting` 不是要求 A 立刻改 Claim。它的意思是：当前 Claim 暂时不能开始，因为 `wait_for` 里的其它 Claim 还 active。A 的默认动作是继续 `wait_for_decision`。当阻塞它的 Claim `completed` 后，C 会把这个等待中的 Claim 重新放回 `assessing`，M 再次判断；如果此时没有 active 冲突，它就会变成 `approved`。只有当 A 想主动绕开冲突，比如缩小 `planned_paths` 或改依赖关系时，才需要提交新版 Claim，且 `version` 必须递增。
+
+`wait_for_coordination_task(project_id)` 是给 M 用的取任务入口。它不是给 A 查自己状态的；A 用 `wait_for_decision`。M 调它时，C 会返回最早一个正在 `assessing` 的 Claim，以及同项目当前 active 的其它 Claim。M 根据这些信息提交 `approved`、`waiting`、`blocked` 或 `needs_human`。
+
 ## 4. MCP/API 表面
 
 当前保留的 MCP tools：
@@ -124,7 +138,7 @@ Claim 的身份是 `(project_id, claim_id)`。不同项目可以复用同一个 
 | `wait_for_coordination_task(project_id)` | M | 等待待协调 Claim；`project_id=""` 表示所有项目 |
 | `submit_coordination_decision(...)` | M | 提交 M 的协调建议，由 C 校验并落库 |
 
-HTTP API 只保留调试/检查用状态查询：
+HTTP API 只保留调试/检查用状态查询。它不是第二套协议，也不是 A/M 的正式入口；正式入口是 MCP。
 
 ```text
 GET /health
@@ -140,6 +154,8 @@ Authorization: Bearer <TCA_API_TOKEN>
 ```
 
 GitHub webhook 用 `GITHUB_WEBHOOK_SECRET` 签名校验，不使用 `TCA_API_TOKEN`。
+
+`/api/claims/<claim_id>` 当前只等价于一次 HTTP 版 `get_claim_state`，方便人用 `curl` 或浏览器排查线上状态。如果以后觉得它增加理解成本，可以删掉；核心流程不依赖它。
 
 ## 5. 配置
 
@@ -170,7 +186,7 @@ GITHUB_TOKEN=replace-with-github-token
 
 说明：
 
-- `TCA_API_TOKEN`：A/M 调 `/mcp` 和 `/api` 的 Bearer token；Server 用它校验。
+- `TCA_API_TOKEN`：客户端调 `/mcp` 的 Bearer token；人用 `/api` 调试时也复用它。
 - `DATABASE_URL`：线上 Postgres 连接串；未设置时本地 SQLite。
 - `TCA_ALLOWED_HOSTS`：MCP transport 的 Host header 白名单，填 TCA Server 域名，不带 `https://`。
 - `GITHUB_WEBHOOK_SECRET`：GitHub webhook secret；GitHub 用它签名，TCA 用它验签。
@@ -244,6 +260,26 @@ uv run --project /path/to/proj_tca tca-client watch --max-tasks 1
 ```bash
 uv run --project /path/to/proj_tca tca-client watch --timeout 1 --idle-exit
 ```
+
+### Long-poll 和主动唤醒
+
+当前 TCA 用 long-poll：A/M 主动发一个“等一会儿”的请求给 C；如果这段时间内有状态变化，C 立即返回；如果没有变化，到超时时间后返回当前状态或空任务。客户端再发下一次请求。
+
+主动唤醒是另一种模型：A/M 可以退出或睡死，C 在状态变化时主动调用某个回调、消息队列、Webhook、系统通知或 Codex task API，把对应 Agent 重新叫起来。主动唤醒更自动，但也更重：要维护回调地址、身份、重试、离线恢复、权限和队列。当前极简版本不做它，所以 M 要用 `tca-client watch` 常驻，A 要在自己的 task 里持续 `wait_for_decision`。
+
+### 原生 MCP 配置生成
+
+从 `.tca/project.yaml` 生成 Codex / Claude / Cursor 的 MCP 配置是有价值的，而且应该作为短期小功能做。它不需要进入 C 的状态机，只需要一个本地命令读取：
+
+```yaml
+mcp:
+  url: https://tca.example.com/mcp
+  token_env: TCA_API_TOKEN
+```
+
+然后输出各客户端需要的配置片段。注意真实 token 不应该写进生成文件，应该继续使用环境变量引用或让客户端自己的 secret 机制保存。
+
+这件事当前还没实现，原因不是协议困难，而是要先确认每个客户端的目标格式和 secret 写法。实现时建议加成 `tca-client mcp-config --target codex|claude|cursor`，只生成配置文本，不改用户全局配置。
 
 ## 6. GitHub 和 Vercel 怎么分清
 
@@ -333,4 +369,3 @@ submit_claim -> assessing -> M decision -> wait/start/complete
 - 自定义 Claim 分支前缀或 Claim 文件路径。
 - GitHub status check / CI 门禁。
 - 多用户 token、项目级权限和审计后台。
-- 从 `.tca/project.yaml` 自动生成 Codex / Claude / Cursor 原生 MCP 配置。
