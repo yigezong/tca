@@ -1,14 +1,20 @@
 from __future__ import annotations
 
 import os
+from argparse import Namespace
 from pathlib import Path
+
+import pytest
 
 from tca.client_cli import (
     ProjectConfig,
+    TcaClientError,
     auto_decision_for_task,
     find_repo_root,
     load_dotenv,
     load_project_config,
+    resolve_project_config,
+    resolve_repo_root,
 )
 
 
@@ -56,6 +62,38 @@ def test_load_dotenv_preserves_existing_values(tmp_path: Path, monkeypatch) -> N
 
     assert os.environ["TCA_API_TOKEN"] == "existing-token"
     assert os.environ["TCA_AGENT_ID"] == "agent-a1"
+
+
+def test_m_commands_can_resolve_config_without_repo_root(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TCA_PROJECT_ID", "owner/repo")
+    monkeypatch.setenv("TCA_MCP_URL", "https://tca.example.com/mcp")
+    args = Namespace(
+        command="watch",
+        repo_root=None,
+        project_id=None,
+        mcp_url=None,
+        token_env=None,
+    )
+
+    repo_root = resolve_repo_root(args)
+
+    assert repo_root is None
+    assert resolve_project_config(args, repo_root) == ProjectConfig(
+        project_id="owner/repo",
+        mcp_url="https://tca.example.com/mcp",
+        token_env="TCA_API_TOKEN",
+    )
+
+
+def test_submit_requires_repo_root(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    args = Namespace(command="submit", repo_root=None)
+
+    with pytest.raises(TcaClientError, match="could not find"):
+        resolve_repo_root(args)
 
 
 def test_auto_decision_approves_when_paths_do_not_overlap() -> None:

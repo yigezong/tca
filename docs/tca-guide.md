@@ -139,6 +139,8 @@ C 只在这些请求里返回最新状态或任务
 
 本仓库只保存第一层的模板 `.env.example`，以及第二层的接入模板 `templates/test-repo/`。本仓库根目录不保存 `.tca/project.yaml` 或 `.codex/config.toml`。
 
+A 通常在被测 repo 工作区运行，所以默认从 `.tca/project.yaml` 读取 `project_id` 和 MCP URL。M 是外部协调 Agent，可以在任意本机目录运行；它可以直接通过 `TCA_PROJECT_ID`、`TCA_MCP_URL` 和 `TCA_API_TOKEN` 连接 TCA，不需要被测 repo checkout。
+
 ## 5. Key 和环境变量在哪里起作用
 
 这张图回答：每个 key 放在哪里、谁用它、在哪一步起作用。

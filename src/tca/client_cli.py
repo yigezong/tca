@@ -15,6 +15,7 @@ from .rules import paths_overlap
 
 
 DEFAULT_TOKEN_ENV = "TCA_API_TOKEN"
+REPO_REQUIRED_COMMANDS = {"submit"}
 
 
 class TcaClientError(RuntimeError):
@@ -81,6 +82,47 @@ def load_project_config(repo_root: Path) -> ProjectConfig:
         mcp_url=mcp_url.strip(),
         token_env=token_env.strip(),
     )
+
+
+def resolve_repo_root(args: argparse.Namespace) -> Path | None:
+    if args.repo_root:
+        return args.repo_root.resolve()
+    try:
+        return find_repo_root(Path.cwd())
+    except TcaClientError:
+        if args.command in REPO_REQUIRED_COMMANDS:
+            raise
+        return None
+
+
+def resolve_project_config(
+    args: argparse.Namespace,
+    repo_root: Path | None,
+) -> ProjectConfig:
+    config = load_project_config(repo_root) if repo_root else None
+    project_id = (
+        args.project_id
+        or os.getenv("TCA_PROJECT_ID")
+        or (config.project_id if config else "")
+    )
+    mcp_url = (
+        args.mcp_url
+        or os.getenv("TCA_MCP_URL")
+        or (config.mcp_url if config else "")
+    )
+    token_env = args.token_env or (config.token_env if config else DEFAULT_TOKEN_ENV)
+
+    if not project_id:
+        raise TcaClientError(
+            "project_id is required; pass --project-id, set TCA_PROJECT_ID, "
+            "or run from a repo with .tca/project.yaml"
+        )
+    if not mcp_url:
+        raise TcaClientError(
+            "mcp_url is required; pass --mcp-url, set TCA_MCP_URL, "
+            "or run from a repo with .tca/project.yaml"
+        )
+    return ProjectConfig(project_id=project_id, mcp_url=mcp_url, token_env=token_env)
 
 
 def decode_tool_result(result: object) -> dict[str, Any] | None:
@@ -262,23 +304,27 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 async def run(args: argparse.Namespace) -> dict[str, Any] | None:
-    repo_root = args.repo_root.resolve() if args.repo_root else find_repo_root(Path.cwd())
+    repo_root = resolve_repo_root(args)
     for env_file in args.env_file:
         load_dotenv(env_file.resolve())
     load_dotenv(Path.cwd() / ".env")
-    load_dotenv(repo_root / ".env")
-    config = load_project_config(repo_root)
+    if repo_root:
+        load_dotenv(repo_root / ".env")
+    config = resolve_project_config(args, repo_root)
 
-    project_id = args.project_id or os.getenv("TCA_PROJECT_ID") or config.project_id
-    mcp_url = args.mcp_url or os.getenv("TCA_MCP_URL") or config.mcp_url
-    token_env = args.token_env or config.token_env
+    project_id = config.project_id
+    mcp_url = config.mcp_url
+    token_env = config.token_env
     token = os.getenv(token_env, "")
     if not token:
-        raise TcaClientError(
-            f"{token_env} is required; set it in the environment or {repo_root / '.env'}"
-        )
+        locations = "the environment"
+        if repo_root:
+            locations += f" or {repo_root / '.env'}"
+        raise TcaClientError(f"{token_env} is required; set it in {locations}")
 
     if args.command == "submit":
+        if repo_root is None:
+            raise TcaClientError("submit requires --repo-root or .tca/project.yaml")
         claim_file = args.claim_file
         if not claim_file.is_absolute():
             claim_file = repo_root / claim_file
