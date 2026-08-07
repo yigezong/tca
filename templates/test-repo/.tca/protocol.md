@@ -21,7 +21,7 @@ A 和 M 都是 TCA Server 之外的客户端，都通过 MCP 与 C 交互。
 
 ## M 的最短流程
 
-1. 常驻调用 `wait_for_coordination_task(project_id)` 等待待协调 Claim；或用 `get_coordination_task(project_id)` 做单次检查。
+1. 常驻调用 `wait_for_coordination_task(project_id)` 等待待协调 Claim；单次检查可把 `timeout_seconds` 设为 `0`。
 2. 判断语义冲突、依赖、约束及是否需要人类。
 3. 调用 `submit_coordination_decision(project_id, claim_id, ...)` 提交建议。
 4. C 校验建议；M 不能直接把 Claim 变为 `executing` 或 `completed`。
@@ -44,7 +44,7 @@ GitHub Claim 分支命名为 `tca/claim/<agent-id>/<claim-id>`。`agent-id` 必�
 
 公网 TCA 使用 Bearer Token。仓库只保存服务地址和 Token 环境变量名；每位成员在本机安全地提供 `TCA_API_TOKEN`，不得提交凭证。
 
-每个 A/M 工作区都需要自己的本地运行环境配置。可复制仓库根目录的 `.env.example` 为 `.env`：
+A 工作区需要自己的本地运行环境配置。可复制仓库根目录的 `.env.example` 为 `.env`：
 
 ```bash
 cp .env.example .env
@@ -58,6 +58,8 @@ TCA_AGENT_ID=agent-a1
 ```
 
 `.env` 必须被 `.gitignore` 忽略，不得提交。
+
+M 不依赖被测 repo 的 `.env.example`。M 运行时只需要能访问 TCA Server，并在自己的运行环境里提供 `TCA_MCP_URL`、`TCA_PROJECT_ID` 和 `TCA_API_TOKEN`。
 
 如果当前 Agent 客户端没有直接暴露 TCA MCP tool，可使用 TCA 包提供的客户端命令：
 

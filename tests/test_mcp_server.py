@@ -33,6 +33,7 @@ async def test_mcp_exposes_wait_for_coordination_task() -> None:
     tools = await mcp.list_tools()
 
     assert "wait_for_coordination_task" in {tool.name for tool in tools}
+    assert "get_coordination_task" not in {tool.name for tool in tools}
     assert "submit_claim" in {tool.name for tool in tools}
 
 

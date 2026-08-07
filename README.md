@@ -1,56 +1,86 @@
 # Team Code Agent
 
-Team Code Agent（TCA）是一个 Git-first 的多 Agent 协作控制服务。它提供一个共享的 TCA Server，让开发 Agent 在修改共享代码前先发布 Claim、等待协调决策，再执行代码修改。
+Team Code Agent（TCA）是一个 Git-first 的多 Agent 协作控制服务。它只做一件事：在多个 Agent 修改同一个 repo 前，把“谁准备改什么、是否冲突、什么时候可以开始、什么时候完成”变成一个共享的权威状态。
 
-本仓库是 **TCA Server 源码仓库**，不是被 TCA 管理的被测 repo。根目录不保存 `.tca/` 或 `.codex/` 活配置。
+本仓库是 TCA Server 源码仓库，不是被 TCA 管理的业务 repo。本仓库自身不使用 TCA 自举，因此根目录不保存 `.tca/` 或 `.codex/` 活配置。被测 repo 的接入模板在 `templates/test-repo/`。
 
-## 架构
+## 核心角色
 
 ```text
-A / M Agent ── MCP ───────┐
-                          ▼
-Git provider ─ webhook ─► TCA Server / C ─► 状态数据库
+GitHub Claim 分支 ── webhook ──► TCA Server / C ──► Postgres
+        ▲                              ▲
+        │                              │
+        A 本机 / Codex ───── MCP ──────┘
+        M 本机 / Codex ───── MCP ──────┘
 ```
 
-- C 是确定性 Controller，维护 Claim 状态机和允许动作。
-- A 是开发 Agent，通过 MCP 查询状态、开始执行和完成任务。
-- M 是外部协调 Agent，通过 MCP 领取 Claim 并提交协调建议。
-- Git provider 保存 Claim 分支和 Claim 文件；当前代码包含 GitHub adapter。
-- 非 GitHub 场景可以通过 MCP `submit_claim` 直接提交 Claim。
-- GitHub Claim 分支使用 `tca/claim/<agent-id>/<claim-id>`，分支里的 agent 和 Claim 文件里的 `author` 必须一致。
-- 状态数据库本地可用 SQLite，部署使用 Postgres。
+- **C / TCA Server**：轻量云服务，只维护状态机、队列和鉴权。
+- **A / 开发 Agent**：在被测 repo 工作区提交 Claim，获批后改代码。
+- **M / 协调 Agent**：本机运行的外部 Agent，通过 MCP 领取协调任务并提交决策。
+- **Git provider**：当前支持 GitHub webhook，Claim 分支固定为 `tca/claim/<agent-id>/<claim-id>`。
 
 ## 本地开发
 
 ```bash
 uv sync
-uv run python -m pytest
+uv run pytest
 uv run tca-app
 ```
 
-## Vercel 部署
+本地未设置 `DATABASE_URL` 时使用 SQLite `tca.db`。线上部署时设置 `DATABASE_URL` 后使用 Postgres。
 
-Vercel 只需要把本仓库部署成 TCA Server。`fringsoo/tca` 自己不配置指向 `/webhooks/github` 的 webhook。
+## 部署 TCA Server
 
-必需环境变量：
+Vercel 部署本仓库即可。`fringsoo/tca` 自己不需要配置 `/webhooks/github`；那个 webhook 是给被测 repo 用的。
+
+最小环境变量：
 
 ```bash
-TCA_API_TOKEN=...
-DATABASE_URL=...
-TCA_ALLOWED_HOSTS=...
+TCA_API_TOKEN=replace-with-random-token
+DATABASE_URL=replace-with-postgres-url
+TCA_ALLOWED_HOSTS=tca.example.com
 ```
 
-- `TCA_API_TOKEN`：A/M 调用 `/mcp` 和 `/api` 的 Bearer token。
-- `DATABASE_URL`：线上 Postgres 连接串。
-- `TCA_ALLOWED_HOSTS`：`/mcp` 的 Host header 白名单，填 TCA Server 域名，不带 `https://`，例如 `tca.example.com`。
+GitHub 被测 repo 需要 webhook 时，再加：
 
-部署后用 `/health` 验证服务：
+```bash
+GITHUB_WEBHOOK_SECRET=replace-with-webhook-secret
+GITHUB_TOKEN=replace-with-github-token
+```
+
+部署后验证：
 
 ```bash
 curl https://<tca-server-host>/health
 ```
 
-## 文档
+## 最小使用
 
-- [docs/tca-guide.md](docs/tca-guide.md)：当前架构、配置和文件地图。
-- [templates/test-repo](templates/test-repo)：被测 repo 的最小接入模板。
+被测 repo 复制 `templates/test-repo/` 后，改 `.tca/project.yaml`：
+
+```yaml
+version: 1
+project_id: owner/repo
+mcp:
+  url: https://tca.example.com/mcp
+  token_env: TCA_API_TOKEN
+```
+
+A 在被测 repo 工作区提供：
+
+```bash
+TCA_API_TOKEN=...
+TCA_AGENT_ID=agent-a1
+```
+
+M 可以在任意本机目录运行，不需要被测 repo checkout：
+
+```bash
+TCA_MCP_URL=https://tca.example.com/mcp
+TCA_PROJECT_ID=owner/repo
+TCA_API_TOKEN=...
+
+uv run --project /path/to/proj_tca tca-client watch
+```
+
+完整原理和操作手册见 [docs/tca-guide.md](docs/tca-guide.md)。

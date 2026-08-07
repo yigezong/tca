@@ -24,4 +24,4 @@ uv run --project ../proj_tca tca-client start <claim_id>
 uv run --project ../proj_tca tca-client complete <claim_id>
 ```
 
-M 是外部 Agent。M 只能通过 MCP 领取协调任务并提交建议，不能直接修改 TCA 数据库或强制改变状态。常驻 M 应使用 `tca-client watch` 持续处理 coordination task，而不是处理一条就退出。
+M 是外部 Agent，不在被测 repo 工作区里假扮开发者。M 在自己的运行环境里配置 `TCA_MCP_URL`、`TCA_PROJECT_ID` 和 `TCA_API_TOKEN`，用 `tca-client watch` 持续领取协调任务并提交建议，不能直接修改 TCA 数据库或强制改变状态。

@@ -16,7 +16,7 @@ INSTRUCTIONS = """
 TCA coordinates coding-agent work in Git-enabled projects.
 A: after publishing or submitting a Claim, call wait_for_decision before shared code changes.
 A: only start when allowed_actions includes start_execution; call complete_claim when done.
-M: use wait_for_coordination_task or get_coordination_task, then submit_coordination_decision.
+M: use wait_for_coordination_task, then submit_coordination_decision.
 The Controller is authoritative; A and M must not infer state from local memory.
 """.strip()
 
@@ -86,12 +86,6 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
     def complete_claim(project_id: str, claim_id: str) -> dict[str, object]:
         """For A: complete executing work and trigger dependent reevaluation."""
         return controller.complete_claim(project_id, claim_id).to_mapping()
-
-    @mcp.tool()
-    def get_coordination_task(project_id: str = "") -> dict[str, object] | None:
-        """For M: get the oldest Claim awaiting semantic coordination."""
-        task = controller.get_coordination_task(project_id or None)
-        return task.to_mapping() if task else None
 
     @mcp.tool()
     async def wait_for_coordination_task(

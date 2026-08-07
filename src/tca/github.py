@@ -12,7 +12,7 @@ from typing import Any, Protocol
 import yaml
 
 from .controller import Controller
-from .domain import Claim
+from .domain import Claim, ClaimRecord
 
 CLAIM_BRANCH_PREFIX = "tca/claim/"
 CLAIM_FILE_PATH = ".tca/claim.yaml"
