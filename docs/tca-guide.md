@@ -93,7 +93,7 @@ M 不需要 TCA Server 源码，但不能凭空做语义判断。`wait_for_coord
 
 | M 上下文来源 | 适合场景 | 边界 |
 |---|---|---|
-| 本地只读 checkout | 本机/团队机器常驻 M | M 可以读文件、看 commit、看历史，但不写业务 repo |
+| M 自己管理的本地只读 checkout | 本机/团队机器常驻 M | M 可以读文件、看 commit、看历史，但不复用 A 的工作区，也不写业务 repo |
 | Git provider 只读访问 | M 不想保存 checkout | M 通过 GitHub/GitLab API 读 `base_commit`、路径和历史 |
 | TCA Server 提供上下文摘要 | 以后做托管 M 或轻客户端 | 需要扩展 C 的 API，把必要文件片段/diff 安全地给 M |
 
@@ -243,7 +243,7 @@ TCA_PROJECT_ID=owner/repo
 TCA_API_TOKEN=...
 ```
 
-如果 M 只做路径级判断，可以只看 `wait_for_coordination_task` 返回的 Claim 元数据。如果 M 要做语义判断，给它一个被测 repo 的只读上下文；最简单是同一台机器上的 read-only checkout，或者让它用 Git provider read-only token 读文件和提交历史。
+如果 M 只做路径级判断，可以只看 `wait_for_coordination_task` 返回的 Claim 元数据。如果 M 要做语义判断，给它一个被测 repo 的只读上下文；最简单是让 M 自己 clone 一份 read-only checkout，或者让它用 Git provider read-only token 读文件和提交历史。不要让 M 复用 A 的工作区，因为 A 的工作区会有未完成修改、分支切换和测试副产物。
 
 真实 M 的循环是 MCP tool 调用，不是 shell 命令：
 

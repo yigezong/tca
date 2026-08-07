@@ -59,6 +59,6 @@ TCA_AGENT_ID=agent-a1
 
 `.env` 必须被 `.gitignore` 忽略，不得提交。
 
-M 不依赖被测 repo 的 `.env.example`。M 在自己的运行环境里通过原生 MCP 连接 TCA Server，并持续调用 `wait_for_coordination_task(project_id)`。如果 M 要判断语义冲突，它还需要被测 repo 的只读上下文；只有 Claim 元数据时，M 只能做路径级和依赖级判断。
+M 不依赖被测 repo 的 `.env.example`，也不复用 A 的工作区。M 在自己的运行环境里通过原生 MCP 连接 TCA Server，并持续调用 `wait_for_coordination_task(project_id)`。如果 M 要判断语义冲突，它还需要自己管理一份被测 repo 的只读上下文；只有 Claim 元数据时，M 只能做路径级和依赖级判断。
 
 真实用户不需要 checkout TCA Server 源码仓库。如果当前 Agent 客户端没有暴露 TCA MCP tools，说明客户端 MCP 还没有配置好；Agent 必须停止共享代码修改并向人报告。
