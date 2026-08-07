@@ -82,7 +82,8 @@ sequenceDiagram
 3. M 通过 MCP 领取任务，提交 `approved`、`approved_with_constraints`、`waiting`、`blocked` 或 `needs_human`。
 4. C 校验 M 的建议并更新状态。
 5. A 通过 MCP 读取状态；只有 `allowed_actions` 包含 `start_execution` 才开始修改共享代码。
-6. A 开始前调用 `start_execution`，完成后调用 `complete_claim`。
+6. A 开始前调用 `start_execution`，完成代码修改后提交并 push `work_branch`。
+7. A 确认工作分支已保存到 Git provider 后调用 `complete_claim`。
 
 当前 MCP tools 是：
 

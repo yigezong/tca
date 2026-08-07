@@ -16,7 +16,8 @@ A 和 M 都是 TCA Server 之外的客户端，都通过 MCP 与 C 交互。
 3. Push Claim 分支；Git provider webhook 调用 `/webhooks/github` 通知 C。
 4. 调用 `wait_for_decision(project_id, claim_id)`。只有 `allowed_actions` 包含 `start_execution` 时才能开始。
 5. 调用 `start_execution(project_id, claim_id)` 后，从目标分支创建 `work_branch` 并修改代码。
-6. 范围变化时停止越界修改，并通过 Claim 分支提交新版 `.tca/claim.yaml`；完成后调用 `complete_claim(project_id, claim_id)`。
+6. 修改完成后提交并 push `work_branch`。
+7. 范围变化时停止越界修改，并通过 Claim 分支提交新版 `.tca/claim.yaml`；完成后调用 `complete_claim(project_id, claim_id)`。
 
 ## M 的最短流程
 

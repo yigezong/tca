@@ -12,8 +12,9 @@
 6. `author` 必须等于 `TCA_AGENT_ID`，`work_branch` 建议使用 `feature/<TCA_AGENT_ID>/<claim_id>`。
 7. 通过 TCA MCP 查询 Claim 状态与 `allowed_actions`；Claim 调用必须带 `project_id` 和 `claim_id`。
 8. 只有 C 返回允许 `start_execution` 时才可开始修改。
+9. 修改完成后提交并 push `work_branch`，再调用 `complete_claim(project_id, claim_id)`。
 
-完成后调用 `complete_claim(project_id, claim_id)`。C 返回的状态是唯一权威状态，不得依据本地上下文自行推断。
+C 返回的状态是唯一权威状态，不得依据本地上下文自行推断。
 
 如果当前 Codex 环境没有直接暴露 TCA MCP tool，可使用 TCA 客户端命令：
 
