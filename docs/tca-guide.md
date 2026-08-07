@@ -79,19 +79,15 @@ A 的流程：
 
 M 的流程：
 
-1. 本机启动 `tca-client watch`。
+1. 启动一个已经配置好 TCA MCP 的 M Agent。
 2. watch 循环调用 `wait_for_coordination_task(project_id)`。
 3. 如果 C 把一个 Claim 交给 M，M 根据 active Claim、语义冲突和风险提交决策。
 4. 当前轻量 M 没有语义模型：没有 active 路径冲突时提交 `approved`，发现冲突时提交 `waiting`。
 5. 处理完一条后继续等下一条。
 
-`tca-client` 是本仓库 Python 包提供的命令行客户端，对应 `pyproject.toml` 里的 script。开发时不需要单独安装，可以直接用：
+真实用户不需要 checkout 本仓库。A/M 应使用 Codex、Claude、Cursor 等客户端的原生 MCP 配置，直接连接 TCA Server 的 `/mcp`。本仓库里的 `tca-client` 只是维护者本地开发和 smoke test 的辅助命令，不是正式用户流程的一部分。
 
-```bash
-uv run --project /path/to/proj_tca tca-client watch
-```
-
-也可以以后发布成包后用 `uv tool install` 或 `pipx install` 安装。当前 `tca-client watch` 只是轻量 runner。它做的是路径级自动判断，不是完整语义审查。更复杂的 M 可以在同一个 MCP 协议上实现。
+当前 smoke M 只是轻量 runner。它做的是路径级自动判断，不是完整语义审查。更复杂的 M 可以在同一个 MCP 协议上实现。
 
 C 在 M 之前还有一层确定性路径规则：如果新 Claim 的 `planned_paths` 已经和 active Claim 重叠，C 会直接把它放到 `waiting`，暂时不生成 M task。等阻塞 Claim 完成后，C 再重新评估这个等待中的 Claim；如果硬冲突消失，它才会进入 M 队列。
 
@@ -225,17 +221,11 @@ TCA_API_TOKEN=...
 TCA_AGENT_ID=agent-a1
 ```
 
-A 可用命令：
-
-```bash
-uv run --project /path/to/proj_tca tca-client wait <claim_id>
-uv run --project /path/to/proj_tca tca-client start <claim_id>
-uv run --project /path/to/proj_tca tca-client complete <claim_id>
-```
+A 的客户端必须能看到 TCA MCP tools。看不到时不要开始改共享代码，而是先报告 MCP 没配置好。
 
 ### M 本机
 
-M 不需要被测 repo checkout。M 可以在任意目录运行，只要有：
+M 不需要被测 repo checkout，也不需要 TCA Server 源码 checkout。M 的 Agent 客户端只要能通过原生 MCP 连接 TCA Server，并知道要 watch 哪个 `project_id`。
 
 ```bash
 TCA_MCP_URL=https://tca.example.com/mcp
@@ -243,29 +233,24 @@ TCA_PROJECT_ID=owner/repo
 TCA_API_TOKEN=...
 ```
 
-启动常驻 watch：
+真实 M 的循环是 MCP tool 调用，不是 shell 命令：
+
+1. 调 `wait_for_coordination_task(project_id)` 等待任务。
+2. 看 Claim、active claims、目标和风险。
+3. 调 `submit_coordination_decision(...)` 提交判断。
+4. 继续等下一条。
+
+本仓库维护者做 smoke test 时，可以临时用仓库内置 CLI：
 
 ```bash
 uv run --project /path/to/proj_tca tca-client watch
-```
-
-只处理一条任务后退出：
-
-```bash
-uv run --project /path/to/proj_tca tca-client watch --max-tasks 1
-```
-
-空队列时退出，适合测试：
-
-```bash
-uv run --project /path/to/proj_tca tca-client watch --timeout 1 --idle-exit
 ```
 
 ### Long-poll 和主动唤醒
 
 当前 TCA 用 long-poll：A/M 主动发一个“等一会儿”的请求给 C；如果这段时间内有状态变化，C 立即返回；如果没有变化，到超时时间后返回当前状态或空任务。客户端再发下一次请求。
 
-主动唤醒是另一种模型：A/M 可以退出或睡死，C 在状态变化时主动调用某个回调、消息队列、Webhook、系统通知或 Codex task API，把对应 Agent 重新叫起来。主动唤醒更自动，但也更重：要维护回调地址、身份、重试、离线恢复、权限和队列。当前极简版本不做它，所以 M 要用 `tca-client watch` 常驻，A 要在自己的 task 里持续 `wait_for_decision`。
+主动唤醒是另一种模型：A/M 可以退出或睡死，C 在状态变化时主动调用某个回调、消息队列、Webhook、系统通知或 Codex task API，把对应 Agent 重新叫起来。主动唤醒更自动，但也更重：要维护回调地址、身份、重试、离线恢复、权限和队列。当前极简版本不做它，所以 M 要常驻调用 `wait_for_coordination_task`，A 要在自己的 task 里持续 `wait_for_decision`。
 
 ### 原生 MCP 配置生成
 
@@ -279,7 +264,7 @@ mcp:
 
 然后输出各客户端需要的配置片段。注意真实 token 不应该写进生成文件，应该继续使用环境变量引用或让客户端自己的 secret 机制保存。
 
-这件事当前还没实现，原因不是协议困难，而是要先确认每个客户端的目标格式和 secret 写法。实现时建议加成 `tca-client mcp-config --target codex|claude|cursor`，只生成配置文本，不改用户全局配置。
+这件事应该优先做，因为它正好解决“用户机器没有 `proj_tca`”的问题。实现时可以加成一个独立的小生成器，例如 `tca mcp-config --target codex|claude|cursor`，只生成配置文本，不改用户全局配置。
 
 ## 6. GitHub 和 Vercel 怎么分清
 
@@ -328,7 +313,7 @@ submit_claim -> assessing -> M decision -> wait/start/complete
 | `.gitignore` | 忽略本地环境、缓存、数据库和 secret |
 | `app.py` | Vercel ASGI 入口 |
 | `vercel.json` | Vercel 函数配置 |
-| `pyproject.toml` | Python 包、依赖、命令和测试配置 |
+| `pyproject.toml` | Python 项目、依赖、命令和测试配置 |
 | `uv.lock` | 依赖锁 |
 | `templates/test-repo/` | 被测 repo 接入模板 |
 
@@ -338,7 +323,7 @@ submit_claim -> assessing -> M decision -> wait/start/complete
 |---|---|
 | `src/tca/app.py` | Starlette app，挂载 `/health`、`/api`、`/mcp`、`/webhooks/github` |
 | `src/tca/mcp_server.py` | MCP tools |
-| `src/tca/client_cli.py` | A/M 本机 CLI |
+| `src/tca/client_cli.py` | 维护者本地开发和 smoke test 用 CLI |
 | `src/tca/controller.py` | 状态机和协调队列逻辑 |
 | `src/tca/domain.py` | Claim、Decision、状态和 allowed_actions |
 | `src/tca/rules.py` | C 侧确定性路径冲突检查 |
@@ -363,7 +348,7 @@ submit_claim -> assessing -> M decision -> wait/start/complete
 按极简原则，当前没有：
 
 - TCA 自举配置：本仓库根目录不放 `.tca/` 或 `.codex/`。
-- 产品级 M 服务：当前只有本机 `tca-client watch`。
+- 产品级 M 服务：当前只有外部 M Agent 通过 MCP long-poll。
 - TCA 主动唤醒 Codex task：当前是 A/M 主动 long-poll。
 - heartbeat、progress、abandon 等额外 tool。
 - 自定义 Claim 分支前缀或 Claim 文件路径。

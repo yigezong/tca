@@ -79,8 +79,8 @@ M 可以在任意本机目录运行，不需要被测 repo checkout：
 TCA_MCP_URL=https://tca.example.com/mcp
 TCA_PROJECT_ID=owner/repo
 TCA_API_TOKEN=...
-
-uv run --project /path/to/proj_tca tca-client watch
 ```
+
+真实用户不需要 checkout 本仓库。A/M 使用 Codex、Claude、Cursor 等客户端的原生 MCP 配置，直接连接 `https://tca.example.com/mcp`。本仓库自带的 `tca-client` 只是维护者本地开发和 smoke test 的辅助命令。
 
 完整原理和操作手册见 [docs/tca-guide.md](docs/tca-guide.md)。

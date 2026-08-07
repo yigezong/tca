@@ -59,15 +59,6 @@ TCA_AGENT_ID=agent-a1
 
 `.env` 必须被 `.gitignore` 忽略，不得提交。
 
-M 不依赖被测 repo 的 `.env.example`。M 运行时只需要能访问 TCA Server，并在自己的运行环境里提供 `TCA_MCP_URL`、`TCA_PROJECT_ID` 和 `TCA_API_TOKEN`。
+M 不依赖被测 repo 的 `.env.example`。M 在自己的运行环境里通过原生 MCP 连接 TCA Server，并持续调用 `wait_for_coordination_task(project_id)`。
 
-如果当前 Agent 客户端没有直接暴露 TCA MCP tool，可使用 TCA 包提供的客户端命令：
-
-```bash
-uv run --project ../proj_tca tca-client task
-uv run --project ../proj_tca tca-client watch
-uv run --project ../proj_tca tca-client approve <claim_id>
-uv run --project ../proj_tca tca-client wait <claim_id>
-uv run --project ../proj_tca tca-client start <claim_id>
-uv run --project ../proj_tca tca-client complete <claim_id>
-```
+真实用户不需要 checkout TCA Server 源码仓库。如果当前 Agent 客户端没有暴露 TCA MCP tools，说明客户端 MCP 还没有配置好；Agent 必须停止共享代码修改并向人报告。
