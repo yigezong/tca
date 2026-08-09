@@ -163,15 +163,24 @@ GitHub webhook 用 `GITHUB_WEBHOOK_SECRET` 签名校验，不使用 `TCA_API_TOK
 
 `/api/claims/<claim_id>` 当前只等价于一次 HTTP 版 `get_claim_state`，方便人用 `curl` 或浏览器排查线上状态。如果以后觉得它增加理解成本，可以删掉；核心流程不依赖它。
 
-## 5. 配置
+## 5. 团队接入和配置归属
 
-有三层配置，职责不要混：
+先区分三种身份：TCA Server 管理者负责服务，项目发起者负责把一个 repo 接入服务，团队成员负责自己的开发环境。一个人可以兼任，但配置仍然只做在它所属的那一层。
 
-| 层 | 放在哪里 | 是否提交 | 作用 |
-|---|---|---|---|
-| TCA Server 环境变量 | Vercel / 本机 | 不提交真实值 | 让 C 能启动、鉴权、连数据库、读 GitHub |
-| 被测 repo 协议配置 | 被测 repo `.tca/` | 提交 | 告诉 A 这个项目的 project_id 和 MCP URL |
-| 客户端本机运行配置 | `.env` 或 shell env | 不提交真实值 | 给 A 提供 token 和 agent id；给 M 提供 watch 目标 |
+| 配置 | 谁创建或设置 | 作用范围 | 放在哪里 | 是否提交 |
+|---|---|---|---|---|
+| TCA Server 环境变量 | Server 管理者 | 一个 TCA 服务 | Vercel / Server env | 否 |
+| `.tca/`、`AGENTS.md`、模板 README | 项目发起者 | 一个被测 repo | 被测 repo | 是 |
+| GitHub webhook | 项目发起者 | 一个被测 repo | GitHub repo Settings | 否 |
+| `TCA_API_TOKEN` | Server 管理者生成，成员只领取 | 当前为一个服务/团队共享 | MCP 客户端 secret store 或机器级环境 | 否 |
+| 原生 MCP 连接 | 每位成员或机器管理员 | 一台机器/一个客户端 | Codex、Claude、Cursor 等客户端配置 | 否 |
+| `TCA_AGENT_ID` | 每个 A 工作区设置 | 一个 A clone/worktree | 工作区 `.env` 或本地环境 | 否 |
+| GitHub 凭证 | 每位成员 | 一个 GitHub 用户 | credential manager / SSH agent | 否 |
+| M 的 repo checkout | 运行 M 的人或团队机器 | 一个项目的 M | M 自己的本地目录 | 否 |
+
+当前极简鉴权模型只有一个 Server 级共享 `TCA_API_TOKEN`。它表示“允许访问这个 TCA Server”，不是个人或项目身份：Server 管理者生成一次，获准访问该实例的成员领取同一个值。成员不应自行生成 token。A 的身份来自 `TCA_AGENT_ID`，Git push 的人员权限来自各自的 GitHub 凭证。
+
+`project_id` 可以让一个 Server 同时保存多个项目的独立 Claim 状态，但当前 token、`GITHUB_WEBHOOK_SECRET` 和 `GITHUB_TOKEN` 都是 Server 级配置，不构成多租户权限隔离。因此当前实例只适合同一信任范围内的多个项目；互不信任的团队要共用公共服务，必须先增加项目级凭证、授权和审计。
 
 ### TCA Server
 
@@ -192,15 +201,24 @@ GITHUB_TOKEN=replace-with-github-token
 
 说明：
 
-- `TCA_API_TOKEN`：客户端调 `/mcp` 的 Bearer token；人用 `/api` 调试时也复用它。
+- `TCA_API_TOKEN`：Server 管理者生成一次的共享 Bearer token；A/M 调 `/mcp`、人用 `/api` 调试时复用它。
 - `DATABASE_URL`：线上 Postgres 连接串；未设置时本地 SQLite。
 - `TCA_ALLOWED_HOSTS`：MCP transport 的 Host header 白名单，填 TCA Server 域名，不带 `https://`。
 - `GITHUB_WEBHOOK_SECRET`：GitHub webhook secret；GitHub 用它签名，TCA 用它验签。
 - `GITHUB_TOKEN`：TCA 从 GitHub Contents API 读取 `.tca/claim.yaml`。
 
-### 被测 repo
+### 项目发起者：一次性接入 repo
 
-复制 `templates/test-repo/` 后，改 `.tca/project.yaml`：
+如果团队已有可用的 TCA Server，项目发起者不需要部署 `proj_tca`。只需：
+
+1. 从 Server 管理者处取得 MCP URL、共享 `TCA_API_TOKEN` 和 webhook secret。
+2. 把 `templates/test-repo/` 复制进被测 repo。
+3. 修改 `.tca/project.yaml`，并把模板文件提交到默认分支。
+4. 在被测 GitHub repo 配置一次 webhook。
+5. 通过安全渠道把共享 token 发给获准成员。
+6. 安排一个 M 在自己的 repo checkout 中持续等待协调任务。
+
+`.tca/project.yaml`：
 
 ```yaml
 version: 1
@@ -209,6 +227,8 @@ mcp:
   url: https://tca.example.com/mcp
   token_env: TCA_API_TOKEN
 ```
+
+这里提交的是 MCP URL 和环境变量名，不是 token 的真实值。所有成员 clone 后自动得到这份项目配置。
 
 Claim 文件固定为 `.tca/claim.yaml`。
 
@@ -220,26 +240,44 @@ tca/claim/<agent-id>/<claim-id>
 
 `<agent-id>` 必须等于 `.tca/claim.yaml` 的 `author`。`<claim-id>` 必须等于 `.tca/claim.yaml` 的 `claim_id`。
 
-### A 本机
+Webhook 的 Payload URL、secret 和事件选择见第 6 节。一个 repo 只配置一次，不随成员或任务重复配置。
+
+### 团队成员：每台机器一次
+
+成员第一次加入时：
+
+1. Clone 被测 repo，并配置自己的 GitHub 凭证。
+2. 从项目发起者处领取共享 `TCA_API_TOKEN`，保存到 MCP 客户端的机器级环境或 secret store。
+3. 按 `.tca/project.yaml` 中的 URL 配置客户端的原生 MCP 连接，并让 Bearer token 从 `TCA_API_TOKEN` 读取。
+4. 确认客户端能看到 TCA MCP tools。
+
+`token_env: TCA_API_TOKEN` 只是在声明环境变量名。它不会生成 token，也不意味着每个成员应该创建一个新 token。真实 token 不进入 repo、prompt 或日志。
+
+当前还没有从 `.tca/project.yaml` 自动写入各客户端配置的正式命令，因此第 3 步需要在每台机器上做一次。后面的“原生 MCP 配置生成”是计划中的简化功能。
+
+成员不需要 checkout TCA Server 源码，不需要配置被测 repo webhook，也不需要接触 `DATABASE_URL`、`GITHUB_TOKEN` 或 `GITHUB_WEBHOOK_SECRET`。
+
+### A 工作区：每个并行 Agent 一个身份
 
 A 在被测 repo 工作区运行，默认从 `.tca/project.yaml` 读取 `project_id` 和 MCP URL。
 
-本机 `.env`：
+每个 A clone/worktree 从 `.env.example` 创建自己的 `.env`，只设置身份：
 
 ```bash
-TCA_API_TOKEN=...
 TCA_AGENT_ID=agent-a1
 ```
 
-A 的客户端必须能看到 TCA MCP tools。看不到时不要开始改共享代码，而是先报告 MCP 没配置好。
+并行 A 使用不同的稳定值，例如 `agent-a1`、`agent-a2`。共享 token 已由机器级 MCP 客户端提供，不必复制到每个工作区。
 
-### M 本机
+成员日常只给 A 普通产品需求，不需要在 prompt 中说“扮演 A”或手动指导 Claim 步骤。A 读取 repo 中的 `AGENTS.md` 和 `.tca/protocol.md` 后自行提交 Claim、等待放行、执行、push 并完成 Claim。
+
+A 的客户端必须能看到 TCA MCP tools。看不到时不要开始改共享代码，也不要自己生成 token；应报告机器级 MCP 配置未完成。
+
+### M：项目级协调工作区
 
 M 不需要 TCA Server 源码 checkout。推荐让 M 自己 clone 一份被测 repo，并直接以这个 repo 根目录作为 M task 的工作目录。这样 M 要看代码上下文时读当前目录就行，不需要额外路径变量。`project_id` 和 MCP URL 从当前 repo 的 `.tca/project.yaml` 读取。
 
-```bash
-TCA_API_TOKEN=...
-```
+M 的 MCP 客户端使用同一个团队 `TCA_API_TOKEN`，但 M 不需要 `TCA_AGENT_ID`。M 是项目级能力，不要求每位开发成员都运行一份；团队可以指定一台本机或团队机器常驻 M。
 
 如果 M 只做路径级判断，可以只看 `wait_for_coordination_task` 返回的 Claim 元数据。如果 M 要做语义判断，就在自己的 repo checkout 里读文件、看 commit、比较 active claims 的目标和路径。不要让 M 复用 A 的工作区，因为 A 的工作区会有未完成修改、分支切换和测试副产物。
 

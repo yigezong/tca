@@ -54,9 +54,13 @@ GITHUB_TOKEN=replace-with-github-token
 curl https://<tca-server-host>/health
 ```
 
-## 最小使用
+## 团队怎么接入
 
-被测 repo 复制 `templates/test-repo/` 后，改 `.tca/project.yaml`：
+TCA Server 管理者只部署一次服务，并生成一个 `TCA_API_TOKEN`。当前极简版本把它作为团队共享的服务访问密钥：成员只领取和保存，不各自生成。`DATABASE_URL`、`GITHUB_TOKEN`、`GITHUB_WEBHOOK_SECRET` 等服务端变量也只由管理者配置。
+
+一个 Server 可以用 `project_id` 同时保存多个项目的 Claim，但当前只有 Server 级共享 token 和 webhook secret，没有项目级权限隔离。因此一个实例只适合同一信任范围内的团队和项目；要向互不信任的团队提供公共服务，还需先实现项目级凭证和授权。
+
+项目发起者把 `templates/test-repo/` 复制到被测 repo，修改并提交 `.tca/project.yaml`：
 
 ```yaml
 version: 1
@@ -66,18 +70,23 @@ mcp:
   token_env: TCA_API_TOKEN
 ```
 
-A 在被测 repo 工作区提供：
+项目发起者还要在被测 GitHub repo 配置一次 `/webhooks/github`，并安排一个 M 使用自己的 repo checkout 持续领取协调任务。这些都不需要每个成员重复配置。
+
+每位成员第一次加入时只做三件事：
+
+1. Clone 被测 repo，并配置自己的 GitHub 凭证。
+2. 从项目发起者处领取共享 `TCA_API_TOKEN`，保存到 MCP 客户端的机器级环境或 secret store；按 `.tca/project.yaml` 配置原生 MCP 连接。
+3. 为每个并行 A 工作区设置唯一且稳定的 `TCA_AGENT_ID`。
+
+A 工作区本地 `.env` 只需要身份：
 
 ```bash
-TCA_API_TOKEN=...
 TCA_AGENT_ID=agent-a1
 ```
 
-M 做路径级判断时可以只连 TCA MCP；M 做语义判断时，推荐直接运行在自己管理的被测 repo checkout 根目录。`project_id` 和 MCP URL 从该 repo 的 `.tca/project.yaml` 读取，本机只提供 token：
+以后成员只需像平常一样给 A 提需求。A 会按仓库里的 `AGENTS.md` 和 `.tca/protocol.md` 自动提交 Claim、等待、修改并完成；成员不需要手动生成 token、重复配置 webhook 或 checkout TCA Server 源码。
 
-```bash
-TCA_API_TOKEN=...
-```
+M 做路径级判断时可以只连 TCA MCP；做语义判断时，推荐直接运行在自己管理的被测 repo 只读 checkout 根目录。M 使用同一个团队 token，但不需要 `TCA_AGENT_ID`。
 
 真实用户不需要 checkout 本仓库。A/M 使用 Codex、Claude、Cursor 等客户端的原生 MCP 配置，直接连接 `https://tca.example.com/mcp`。本仓库自带的 `tca-client` 只是维护者本地开发和 smoke test 的辅助命令。
 

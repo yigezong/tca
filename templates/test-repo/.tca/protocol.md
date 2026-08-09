@@ -42,7 +42,11 @@ GitHub Claim 分支命名为 `tca/claim/<agent-id>/<claim-id>`。`agent-id` 必�
 
 ## 凭证
 
-公网 TCA 使用 Bearer Token。仓库只保存服务地址和 Token 环境变量名；每位成员在本机安全地提供 `TCA_API_TOKEN`，不得提交凭证。
+公网 TCA 使用 Bearer Token。TCA Server 管理者只生成一次 `TCA_API_TOKEN`，再通过安全渠道交给获准使用该服务的团队成员。当前极简版本使用团队共享 token，不是每位成员或每个 Agent 各自生成 token。
+
+这个 token 当前属于整个 TCA Server，不属于单个项目。`project_id` 隔离 Claim 状态，但不隔离访问权限；同一个实例只应服务同一信任范围内的项目。
+
+仓库只提交服务地址和 token 环境变量名。成员把收到的 `TCA_API_TOKEN` 保存到 MCP 客户端的机器级环境或 secret store，一台机器通常只需配置一次；不得把真实值提交到 repo、写进 prompt 或输出到日志。
 
 A 工作区需要自己的本地运行环境配置。可复制仓库根目录的 `.env.example` 为 `.env`：
 
@@ -50,15 +54,14 @@ A 工作区需要自己的本地运行环境配置。可复制仓库根目录的
 cp .env.example .env
 ```
 
-然后填入真实 token：
+然后只填写这个工作区的稳定身份：
 
 ```text
-TCA_API_TOKEN=...
 TCA_AGENT_ID=agent-a1
 ```
 
-`.env` 必须被 `.gitignore` 忽略，不得提交。
+并行 A 使用不同的 `TCA_AGENT_ID`。`.env` 必须被 `.gitignore` 忽略，不得提交。
 
-M 不依赖被测 repo 的 `.env.example`，也不复用 A 的工作区。M 做语义判断时应自己 clone 一份被测 repo，并直接以该 repo 根目录作为 M task 的工作目录；`project_id` 和 MCP URL 同样从 `.tca/project.yaml` 读取。M 在自己的运行环境里通过原生 MCP 连接 TCA Server，并持续调用 `wait_for_coordination_task(project_id)`。只有 Claim 元数据时，M 只能做路径级和依赖级判断。
+M 不需要 `TCA_AGENT_ID`，也不复用 A 的工作区。M 使用同一个团队 token 连接 MCP；做语义判断时应自己 clone 一份被测 repo，并直接以该 repo 根目录作为 M task 的工作目录。`project_id` 和 MCP URL 从 `.tca/project.yaml` 读取。M 持续调用 `wait_for_coordination_task(project_id)`；只有 Claim 元数据时，它只能做路径级和依赖级判断。
 
 真实用户不需要 checkout TCA Server 源码仓库。如果当前 Agent 客户端没有暴露 TCA MCP tools，说明客户端 MCP 还没有配置好；Agent 必须停止共享代码修改并向人报告。

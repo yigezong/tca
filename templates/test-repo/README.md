@@ -11,14 +11,14 @@
 .tca/protocol.md         A/M/C 协作协议
 .tca/claim.example.yaml  Claim 示例
 AGENTS.md                给开发 Agent 读的入口说明
-.env.example             A 工作区本地 secret 模板
+.env.example             A 工作区本地身份模板
 ```
 
 不要提交 `.env` 或真实 token。
 
-## 1. 配置被测 Repo
+## 1. 项目发起者：一次性接入
 
-修改 `.tca/project.yaml`：
+项目发起者把本模板复制到被测 repo，修改 `.tca/project.yaml`：
 
 ```yaml
 version: 1
@@ -29,20 +29,40 @@ mcp:
   token_env: TCA_API_TOKEN
 ```
 
-然后把模板文件提交到被测 repo 的默认分支。
+然后把模板文件提交到被测 repo 的默认分支。以后所有成员 clone repo 时都会得到项目标识、MCP 地址、协议和 Agent 规则，不需要各自重新填写。
 
-## 2. 配置 GitHub Webhook
-
-在被测 GitHub repo 里添加 webhook：
+在被测 GitHub repo 里添加一次 webhook：
 
 - Payload URL：`https://<tca-server-host>/webhooks/github`
 - Content type：`application/json`
 - Secret：和 TCA Server 的 `GITHUB_WEBHOOK_SECRET` 一致
 - Events：`push`
 
-这个 webhook 用来让 TCA 发现 `tca/claim/<agent-id>/<claim-id>` 分支的 push。
+这个 webhook 属于项目，不属于成员。它用来让 TCA 发现 `tca/claim/<agent-id>/<claim-id>` 分支的 push，只配置一次。
 
-## 3. 配置 A 工作区
+项目发起者还要：
+
+1. 从 TCA Server 管理者处取得 MCP URL、共享 `TCA_API_TOKEN` 和 webhook secret。
+2. 通过安全渠道把共享 `TCA_API_TOKEN` 发给获准加入项目的成员，不写进 repo 或聊天 prompt。
+3. 安排一个 M 工作区持续领取本项目的协调任务。
+
+如果团队自己部署 TCA Server，服务部署和 token 生成也只做一次；使用已有 TCA Server 时无需重复部署。
+
+当前 TCA 使用 Server 级共享 token 和 webhook secret。一个 Server 虽能用 `project_id` 处理多个项目，但只适合同一信任范围，不提供互不信任团队之间的权限隔离。
+
+## 2. 团队成员：每台机器一次
+
+成员 clone repo 后：
+
+1. 配置自己的 GitHub 凭证，确保 Agent 可以创建并 push Claim 分支和工作分支。
+2. 从项目发起者处领取现成的 `TCA_API_TOKEN`。不要自行生成，因为当前团队内所有 A/M 使用同一个服务 token。
+3. 把 token 保存到 MCP 客户端的机器级环境或 secret store，并按 `.tca/project.yaml` 中的 URL 配置原生 MCP 连接。
+
+`token_env: TCA_API_TOKEN` 只是告诉客户端读取哪个环境变量，不包含 token，也不会自动生成 token。一台机器配置好后，在这台机器上参加同一 TCA 服务下的项目通常不用重复配置。
+
+真实用户不需要安装或 checkout TCA Server 源码仓库。Agent 客户端必须能看到 TCA MCP tools；如果看不到，先修复机器级 MCP 配置，不要开始修改共享代码。
+
+## 3. A 工作区：每个并行 Agent 一个身份
 
 每个开发 Agent 都使用一份普通 clone 或 worktree。
 
@@ -52,16 +72,15 @@ mcp:
 cp .env.example .env
 ```
 
-填入：
+只填入这个工作区的稳定身份：
 
 ```text
-TCA_API_TOKEN=...
 TCA_AGENT_ID=agent-a1
 ```
 
 `TCA_AGENT_ID` 是每个 Agent 工作区的稳定身份。并行 Agent 使用不同值，例如 `agent-a1`、`agent-a2`。
 
-Agent 客户端必须能看到 TCA MCP tools。如果看不到，说明 MCP 没配好，Agent 必须停止共享代码修改并向人报告。
+成员给 A 的 prompt 仍然只是普通产品需求，不需要写“你扮演 A”或逐步指挥 TCA。A 从仓库里的 `AGENTS.md` 得知协议，并使用当前工作区的 `TCA_AGENT_ID` 自动完成 Claim 流程。
 
 ## 4. 配置 M 工作区
 
@@ -75,7 +94,7 @@ cd repo-for-m
 git remote set-url --push origin DISABLED
 ```
 
-M 从当前 repo 的 `.tca/project.yaml` 读取 `project_id` 和 MCP URL。M 还需要在自己的环境或 secret store 里提供 `TCA_API_TOKEN`。
+M 从当前 repo 的 `.tca/project.yaml` 读取 `project_id` 和 MCP URL，并从自己的 MCP 客户端读取同一个团队 `TCA_API_TOKEN`。M 不需要 `TCA_AGENT_ID`。
 
 M 常驻循环调用：
 
@@ -86,7 +105,14 @@ submit_coordination_decision(...)
 
 如果 M 只有 Claim 元数据，它只能做路径级和依赖级判断。如果 M 要做语义判断，就只读查看自己这份 repo checkout，不提交、不 push。
 
-## 5. 一次正常 Claim 流程
+## 5. 日常使用
+
+完成上述一次性接入后：
+
+- 项目发起者不需要为新任务重复配置 webhook、服务端环境变量或项目文件。
+- 成员不需要为每个任务重新配置 MCP 或 token。
+- 人只向 A 提正常需求；A 自己执行下面的 Claim 流程。
+- M 保持 long-poll，自动领取需要协调的 Claim。
 
 A 对每个人类需求执行：
 
