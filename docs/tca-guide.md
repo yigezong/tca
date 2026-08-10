@@ -11,7 +11,7 @@ TCA 是一个 Git-first 的多 Agent 协作控制服务。它不替代 Git、PR 
 | C / Controller | TCA Server，通常部署在 Vercel | 维护 Claim 状态机、校验状态转换、保存协调队列 |
 | A / 开发 Agent | 用户本机、Codex task、CI worker | 提交 Claim，等 C 放行，执行代码修改，完成 Claim |
 | M / 协调 Agent | 用户本机或团队机器，不默认云上常驻 | 领取待协调 Claim，结合 Claim 元数据和 repo 只读上下文判断冲突/依赖/风险，向 C 提交建议 |
-| 集成者 | 人、集成 Agent 或 CI | 把 completed 工作分支合入目标分支，并确认 Claim 已 integrated |
+| 集成者 | 人、开发 Agent、集成 Agent 或 CI | 按团队正常 Git 流程把 completed 工作分支合入目标分支 |
 | P / 人 | 人 | 提出目标，在机器无法自动裁决时决策 |
 | Git provider | GitHub 等 | 保存 Claim 分支、工作分支和代码历史 |
 
@@ -66,8 +66,9 @@ sequenceDiagram
     A->>Git: push work_branch
     A->>C: complete_claim(project_id, claim_id)
     C->>DB: state=completed（待集成）
-    I->>Git: merge work_branch into target branch
-    I->>C: integrate_claim(project_id, claim_id)
+    I->>Git: merge work_branch into default branch
+    Git->>C: default branch push webhook
+    C->>Git: 检查 work_branch tip 是否为默认分支祖先
     C->>DB: state=integrated
 ```
 
@@ -83,7 +84,9 @@ A 的流程：
 
 `complete_claim` 只表示“这个 Claim 的工作分支已经完成并推到 Git provider”。它不表示代码已经进入 `main`。completed Claim 会继续出现在 M 收到的协调上下文里；如果后续 Claim 与它重叠，M 必须要求后续 A 先检查并纳入该 `work_branch`，或者返回 `needs_human`。不能因为前一个 Agent 已结束就假设它的代码已经进入基线。
 
-进入 `main` 仍然要走团队自己的 PR、merge、CI 或人工集成流程。确认目标分支已经包含这项工作后，集成者调用 `integrate_claim(project_id, claim_id)`。只有 `integrated` 才会把该 Claim 从后续协调上下文移除。TCA 不自动猜测某次 push 是否等价于产品层面的集成。
+进入默认分支仍然走团队自己的 PR、merge、CI 或人工集成流程。集成者不需要操作 TCA：GitHub 默认分支收到 push 后，webhook 会触发 TCA 调用 GitHub compare API。只有 completed Claim 的 `work_branch` tip 确实是默认分支祖先时，C 才自动转为 `integrated`，并把它从后续协调上下文移除。
+
+这个判断刻意保守。普通 merge commit 和 fast-forward 会保留祖先关系，可以自动确认；squash/rebase 会改写提交历史，TCA 无法仅凭 Git 历史可靠证明整项工作已经进入默认分支。关闭 webhook、使用其它 Git provider 或采用这类 merge 策略时，管理员核验代码后才使用 `integrate_claim` 兜底。普通 A 只做到 `complete_claim`，不承担集成状态记账。
 
 M 的流程：
 
@@ -107,7 +110,7 @@ M 不需要 TCA Server 源码，但不能凭空做语义判断。`wait_for_coord
 
 现在的实现只提供前两层的接口基础，没有把 repo 文件内容塞进 TCA 状态机。这样保持 C 轻量，也避免把代码库内容长期存进 TCA 数据库。
 
-C 在 M 之前还有一层确定性路径规则：如果新 Claim 的 `planned_paths` 已经和仍 active 的 Claim 重叠，C 会直接把它放到 `waiting`，暂时不生成 M task。等阻塞 Claim completed 后，C 重新评估等待项；completed 工作不再形成硬等待，但会作为协调上下文交给 M，由 M 决定后续 A 如何纳入该工作。集成者确认 integrated 后，它才从上下文移除。
+C 在 M 之前还有一层确定性路径规则：如果新 Claim 的 `planned_paths` 已经和仍 active 的 Claim 重叠，C 会直接把它放到 `waiting`，暂时不生成 M task。等阻塞 Claim completed 后，C 重新评估等待项；completed 工作不再形成硬等待，但会作为协调上下文交给 M，由 M 决定后续 A 如何纳入该工作。GitHub webhook 确认工作已进入默认分支后，它才从上下文移除。
 
 ## 3. 状态机
 
@@ -125,14 +128,15 @@ Claim 的身份是 `(project_id, claim_id)`。不同项目可以复用同一个 
 | `needs_human` | 需要人处理 | `get_claim_state` |
 | `blocked` | 被阻断 | `get_claim_state` |
 | `executing` | A 正在执行 | `complete_claim` |
-| `completed` | 工作分支已完成并 push，等待进入目标分支 | `integrate_claim` |
+| `completed` | 工作分支已完成并 push，等待进入默认分支 | 无；等待 GitHub webhook 自动确认 |
 | `integrated` | 工作已进入目标分支 | 无 |
 
 重要规则：
 
 - `wait_for_decision` 会穿过 `received`、`assessing`、`waiting` 继续等，直到超时或出现最终可行动状态。
 - `complete_claim` 后，C 会重新评估等待该 Claim 的其它 Claim，并把 completed 工作保留在 M 的协调上下文里。
-- 只有目标分支已经包含 completed 工作时，集成者才能调用 `integrate_claim`。
+- GitHub 默认分支 push 后，C 只自动集成祖先关系得到证明的 completed Claim。
+- `integrate_claim` 只用于无 webhook、非 GitHub 或 squash/rebase 等无法自动证明的场景，由管理员核验后调用。
 - M 不能把 Claim 直接改为 `executing` 或 `completed`。
 - A 没有 `start_execution` 权限时必须停止修改共享代码。
 
@@ -151,7 +155,7 @@ Claim 的身份是 `(project_id, claim_id)`。不同项目可以复用同一个 
 | `wait_for_decision(project_id, claim_id)` | A | 等待 Claim 离开中间等待态 |
 | `start_execution(project_id, claim_id)` | A | 把获批 Claim 转为 `executing` |
 | `complete_claim(project_id, claim_id)` | A | 把执行中的 Claim 转为 `completed` |
-| `integrate_claim(project_id, claim_id)` | 集成者 | 确认 completed 工作已进入目标分支，转为 `integrated` |
+| `integrate_claim(project_id, claim_id)` | 管理员 / adapter | 自动确认不可用时，核验 completed 工作已进入目标分支并手动兜底 |
 | `wait_for_coordination_task(project_id)` | M | 等待待协调 Claim；`project_id=""` 表示所有项目 |
 | `submit_coordination_decision(...)` | M | 提交 M 的协调建议，由 C 校验并落库 |
 
@@ -216,7 +220,7 @@ GITHUB_TOKEN=replace-with-github-token
 - `DATABASE_URL`：线上 Postgres 连接串；未设置时本地 SQLite。
 - `TCA_ALLOWED_HOSTS`：MCP transport 的 Host header 白名单，填 TCA Server 域名，不带 `https://`。
 - `GITHUB_WEBHOOK_SECRET`：GitHub webhook secret；GitHub 用它签名，TCA 用它验签。
-- `GITHUB_TOKEN`：TCA 从 GitHub Contents API 读取 `.tca/claim.yaml`。
+- `GITHUB_TOKEN`：TCA 读取 `.tca/claim.yaml`，并用 GitHub compare API 验证 completed 工作分支是否进入默认分支。
 
 ### 项目发起者：一次性接入 repo
 
@@ -337,6 +341,11 @@ fringsoo/tca push -> Vercel Git integration -> 部署 TCA Server
 被测 repo push tca/claim/<agent-id>/<claim-id>
   -> GitHub webhook
   -> https://tca.example.com/webhooks/github
+
+被测 repo push 默认分支
+  -> GitHub webhook
+  -> TCA compare completed work branches
+  -> 自动标记 integrated
 ```
 
 Webhook 配置：
@@ -348,7 +357,7 @@ Webhook 配置：
 
 ## 7. 非 GitHub 场景
 
-CooperBench 或其它非 GitHub git server 不走 `/webhooks/github`。它们可以直接通过 MCP `submit_claim(claim)` 提交同一份 Claim 数据。
+CooperBench 或其它非 GitHub git server 不走 `/webhooks/github`。它们可以直接通过 MCP `submit_claim(claim)` 提交同一份 Claim 数据；集成完成后由 adapter 或管理员调用 `integrate_claim` 兜底。
 
 这时仍然使用同一个状态机：
 

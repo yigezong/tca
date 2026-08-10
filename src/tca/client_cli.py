@@ -326,7 +326,8 @@ def build_parser() -> argparse.ArgumentParser:
     complete.add_argument("claim_id")
 
     integrate = subparsers.add_parser(
-        "integrate", help="Integrator: confirm completed work is in the target branch."
+        "integrate",
+        help="Fallback: confirm integration when a webhook cannot prove ancestry.",
     )
     integrate.add_argument("claim_id")
 

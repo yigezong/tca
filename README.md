@@ -7,7 +7,7 @@ Team Code Agent（TCA）是一个 Git-first 的多 Agent 协作控制服务。�
 ## 核心角色
 
 ```text
-GitHub Claim 分支 ── webhook ──► TCA Server / C ──► Postgres
+GitHub Claim / 默认分支 ─ webhook ─► TCA Server / C ─► Postgres
         ▲                              ▲
         │                              │
         A 本机 / Codex ───── MCP ──────┘
@@ -17,8 +17,8 @@ GitHub Claim 分支 ── webhook ──► TCA Server / C ──► Postgres
 - **C / TCA Server**：轻量云服务，只维护状态机、队列和鉴权。
 - **A / 开发 Agent**：在被测 repo 工作区提交 Claim，获批后改代码。
 - **M / 协调 Agent**：本机运行的外部 Agent，通过 MCP 领取协调任务并提交决策。
-- **集成者**：把 completed 工作分支合入目标分支后，调用 `integrate_claim`。
-- **Git provider**：当前支持 GitHub webhook，Claim 分支固定为 `tca/claim/<agent-id>/<claim-id>`。
+- **集成者**：按团队正常 Git 流程把 completed 工作分支合入目标分支。
+- **Git provider**：当前支持 GitHub webhook；Claim 分支用于申报，默认分支 push 用于自动确认集成。
 
 ## 本地开发
 
@@ -87,7 +87,9 @@ TCA_AGENT_ID=agent-a1
 
 以后成员只需像平常一样给 A 提需求。A 会按仓库里的 `AGENTS.md` 和 `.tca/protocol.md` 自动提交 Claim、等待、修改并完成；成员不需要手动生成 token、重复配置 webhook 或 checkout TCA Server 源码。
 
-`completed` 只表示工作分支已经 push 并可供集成，不表示它已经进入 `main`。completed Claim 会继续出现在 M 的协调上下文中，避免后续 Agent 从旧基线重复修改同一路径。PR、merge 或集成完成后，集成者调用 `integrate_claim(project_id, claim_id)`；`integrated` 才表示这项工作已进入团队目标分支。
+`completed` 只表示工作分支已经 push 并可供集成，不表示它已经进入 `main`。completed Claim 会继续出现在 M 的协调上下文中，避免后续 Agent 从旧基线重复修改同一路径。集成者只需按团队流程 merge 并 push：GitHub 默认分支 webhook 会让 TCA 检查 completed 工作分支是否已进入该分支，并自动转为 `integrated`。
+
+自动确认要求 merge 后仍保留工作分支提交历史，普通 merge commit 和 fast-forward 都满足。关闭 webhook、使用其它 Git provider，或 squash/rebase 导致 TCA 无法证明祖先关系时，管理员核验后可用 `integrate_claim` 兜底；普通 A 不负责这项 TCA 记账。
 
 M 做路径级判断时可以只连 TCA MCP；做语义判断时，推荐直接运行在自己管理的被测 repo 只读 checkout 根目录。M 使用同一个团队 token，但不需要 `TCA_AGENT_ID`。
 

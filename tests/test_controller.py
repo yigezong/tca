@@ -106,7 +106,7 @@ def test_integrated_claim_is_removed_from_coordination_context() -> None:
     assert completed.state is ClaimState.COMPLETED
     assert controller.get_claim_state("team/project", "claim-1")[
         "allowed_actions"
-    ] == ["integrate_claim"]
+    ] == []
 
     integrated = controller.integrate_claim(
         first.claim.project_id, first.claim.claim_id

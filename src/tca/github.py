@@ -16,15 +16,19 @@ from .domain import Claim, ClaimRecord
 
 CLAIM_BRANCH_PREFIX = "tca/claim/"
 CLAIM_FILE_PATH = ".tca/claim.yaml"
-GITHUB_CONTENTS_API_URL = "https://api.github.com"
+GITHUB_API_URL = "https://api.github.com"
 
 
-class ClaimLoader(Protocol):
+class GitHubReader(Protocol):
     def load(self, repository: str, branch: str) -> dict[str, Any]: ...
+
+    def is_ancestor(
+        self, repository: str, ancestor: str, descendant: str
+    ) -> bool: ...
 
 
 @dataclass(slots=True)
-class GitHubContentLoader:
+class GitHubClient:
     token: str
 
     def load(self, repository: str, branch: str) -> dict[str, Any]:
@@ -32,9 +36,40 @@ class GitHubContentLoader:
         encoded_path = urllib.parse.quote(CLAIM_FILE_PATH, safe="/")
         encoded_branch = urllib.parse.quote(branch, safe="")
         url = (
-            f"{GITHUB_CONTENTS_API_URL}/repos/{encoded_repo}/contents/{encoded_path}"
+            f"{GITHUB_API_URL}/repos/{encoded_repo}/contents/{encoded_path}"
             f"?ref={encoded_branch}"
         )
+        payload = self._get_json(url)
+        if payload.get("encoding") != "base64":
+            raise ValueError("GitHub claim content is not base64 encoded")
+        raw = base64.b64decode(payload["content"]).decode("utf-8")
+        value = yaml.safe_load(raw)
+        if not isinstance(value, dict):
+            raise ValueError("claim file must contain a YAML object")
+        return value
+
+    def is_ancestor(
+        self, repository: str, ancestor: str, descendant: str
+    ) -> bool:
+        encoded_repo = urllib.parse.quote(repository, safe="/")
+        encoded_ancestor = urllib.parse.quote(ancestor, safe="")
+        encoded_descendant = urllib.parse.quote(descendant, safe="")
+        url = (
+            f"{GITHUB_API_URL}/repos/{encoded_repo}/compare/"
+            f"{encoded_ancestor}...{encoded_descendant}"
+        )
+        payload = self._get_json(url)
+        base = payload.get("base_commit")
+        merge_base = payload.get("merge_base_commit")
+        if not isinstance(base, dict) or not isinstance(merge_base, dict):
+            raise ValueError("GitHub compare response is missing commit data")
+        base_sha = str(base.get("sha", ""))
+        merge_base_sha = str(merge_base.get("sha", ""))
+        if not base_sha or not merge_base_sha:
+            raise ValueError("GitHub compare response is missing commit SHAs")
+        return base_sha == merge_base_sha
+
+    def _get_json(self, url: str) -> dict[str, Any]:
         headers = {
             "Accept": "application/vnd.github+json",
             "User-Agent": "team-code-agent/0.1",
@@ -45,13 +80,19 @@ class GitHubContentLoader:
         request = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(request, timeout=15) as response:
             payload = json.load(response)
-        if payload.get("encoding") != "base64":
-            raise ValueError("GitHub claim content is not base64 encoded")
-        raw = base64.b64decode(payload["content"]).decode("utf-8")
-        value = yaml.safe_load(raw)
-        if not isinstance(value, dict):
-            raise ValueError("claim file must contain a YAML object")
-        return value
+        if not isinstance(payload, dict):
+            raise ValueError("GitHub API response must be a JSON object")
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
+class GitHubWebhookResult:
+    claim: ClaimRecord | None = None
+    integrated_claims: tuple[ClaimRecord, ...] = ()
+
+    @property
+    def accepted(self) -> bool:
+        return self.claim is not None or bool(self.integrated_claims)
 
 
 def verify_github_signature(secret: str, body: bytes, signature: str | None) -> bool:
@@ -76,34 +117,54 @@ def parse_claim_branch(branch: str) -> tuple[str | None, str] | None:
 @dataclass(slots=True)
 class GitHubWebhookHandler:
     controller: Controller
-    loader: ClaimLoader
+    github: GitHubReader
     secret: str
 
     def handle(
         self, body: bytes, signature: str | None, event: str | None
-    ) -> ClaimRecord | None:
+    ) -> GitHubWebhookResult:
         if not verify_github_signature(self.secret, body, signature):
             raise PermissionError("invalid GitHub webhook signature")
         if event != "push":
-            return None
+            return GitHubWebhookResult()
         payload = json.loads(body)
         ref = str(payload.get("ref", ""))
         heads_prefix = "refs/heads/"
         if not ref.startswith(heads_prefix):
-            return None
+            return GitHubWebhookResult()
         branch = ref.removeprefix(heads_prefix)
         claim_branch = parse_claim_branch(branch)
-        if claim_branch is None:
-            return None
-        branch_author, claim_id = claim_branch
-        repository = str(payload.get("repository", {}).get("full_name", ""))
+        repository_data = payload.get("repository", {})
+        repository = str(repository_data.get("full_name", ""))
         if not repository:
             raise ValueError("GitHub webhook is missing repository.full_name")
-        value = self.loader.load(repository, branch)
+
+        if claim_branch is None:
+            default_branch = str(repository_data.get("default_branch", ""))
+            if not default_branch or branch != default_branch:
+                return GitHubWebhookResult()
+            integrated = []
+            for record in self.controller.list_completed_claims(repository):
+                if self.github.is_ancestor(
+                    repository, record.claim.work_branch, default_branch
+                ):
+                    integrated.append(
+                        self.controller.integrate_claim(
+                            repository, record.claim.claim_id
+                        )
+                    )
+            return GitHubWebhookResult(integrated_claims=tuple(integrated))
+
+        branch_author, claim_id = claim_branch
+        value = self.github.load(repository, branch)
         value.setdefault("claim_id", claim_id)
         value.setdefault("project_id", repository)
         if value["claim_id"] != claim_id:
             raise ValueError("claim_id does not match Claim branch")
+        if value["project_id"] != repository:
+            raise ValueError("project_id does not match GitHub repository")
         if branch_author is not None and value.get("author") != branch_author:
             raise ValueError("author does not match Claim branch")
-        return self.controller.submit_claim(Claim.from_mapping(value))
+        return GitHubWebhookResult(
+            claim=self.controller.submit_claim(Claim.from_mapping(value))
+        )

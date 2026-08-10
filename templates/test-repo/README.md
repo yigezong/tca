@@ -38,7 +38,7 @@ mcp:
 - Secret：和 TCA Server 的 `GITHUB_WEBHOOK_SECRET` 一致
 - Events：`push`
 
-这个 webhook 属于项目，不属于成员。它用来让 TCA 发现 `tca/claim/<agent-id>/<claim-id>` 分支的 push，只配置一次。
+这个 webhook 属于项目，不属于成员。它既让 TCA 发现 `tca/claim/<agent-id>/<claim-id>` 分支，也在默认分支 push 后自动确认已集成的 Claim；只配置一次。
 
 项目发起者还要：
 
@@ -124,4 +124,6 @@ A 对每个人类需求执行：
 6. 创建并 push `work_branch`，推荐 `feature/<agent-id>/<claim-id>`。
 7. 工作分支 push 后，调用 `complete_claim(project_id, claim_id)`。
 
-TCA 的 `completed` 不等于 merge 到 `main`。completed Claim 会继续参与协调，防止后续 Agent 忽略尚未进入基线的工作。PR、CI、merge 和最终产品取舍仍然走团队自己的集成流程；确认目标分支已包含工作后，由合并者调用 `integrate_claim(project_id, claim_id)`。`integrated` 才表示这项工作已经进入目标分支。
+TCA 的 `completed` 不等于 merge 到默认分支。completed Claim 会继续参与协调，防止后续 Agent 忽略尚未进入基线的工作。PR、CI、merge 和最终产品取舍仍然走团队自己的集成流程；合并者只需正常 merge 和 push。GitHub 默认分支 webhook 会让 TCA 自动验证工作分支是否已进入提交历史，验证成功后转为 `integrated`。
+
+普通 merge commit 和 fast-forward 可以自动确认。关闭 webhook、使用其它 Git provider，或 squash/rebase 改写提交历史时，由管理员核验后使用 `integrate_claim` 兜底；普通 A 不需要处理。

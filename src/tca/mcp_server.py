@@ -19,7 +19,8 @@ A: only start when allowed_actions includes start_execution; call complete_claim
 M: use wait_for_coordination_task, then submit_coordination_decision. completed_claims are
 pending integration; overlapping work must incorporate their work branches
 or require a human decision.
-Integrator: call integrate_claim only after the completed work is in the target branch.
+GitHub default-branch pushes automatically confirm integration. integrate_claim is only
+a fallback for providers or merge strategies that cannot preserve branch ancestry.
 The Controller is authoritative; A and M must not infer state from local memory.
 """.strip()
 
@@ -92,7 +93,7 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
 
     @mcp.tool()
     def integrate_claim(project_id: str, claim_id: str) -> dict[str, object]:
-        """For integrators: confirm completed work is present in the target branch."""
+        """Fallback: confirm integration when no webhook can prove branch ancestry."""
         return controller.integrate_claim(project_id, claim_id).to_mapping()
 
     @mcp.tool()

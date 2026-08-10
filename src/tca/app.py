@@ -11,7 +11,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 
 from .controller import Controller
-from .github import GitHubContentLoader, GitHubWebhookHandler
+from .github import GitHubClient, GitHubWebhookHandler
 from .mcp_server import create_mcp
 from .rules import BasicRuleChecker
 from .store import build_store
@@ -53,10 +53,10 @@ def build_components() -> tuple[Controller, GitHubWebhookHandler | None]:
     github_secret = os.getenv("GITHUB_WEBHOOK_SECRET", "")
     if github_secret:
         github_token = os.getenv("GITHUB_TOKEN", "")
-        loader = GitHubContentLoader(token=github_token)
+        github_client = GitHubClient(token=github_token)
         github = GitHubWebhookHandler(
             controller=controller,
-            loader=loader,
+            github=github_client,
             secret=github_secret,
         )
 
@@ -90,13 +90,19 @@ def create_app():
         if github is None:
             return JSONResponse({"error": "GitHub webhook is disabled"}, status_code=404)
         try:
-            record = github.handle(
+            result = github.handle(
                 await request.body(),
                 request.headers.get("x-hub-signature-256"),
                 request.headers.get("x-github-event"),
             )
             return JSONResponse(
-                {"accepted": record is not None, "claim": record.to_mapping() if record else None},
+                {
+                    "accepted": result.accepted,
+                    "claim": result.claim.to_mapping() if result.claim else None,
+                    "integrated_claims": [
+                        record.to_mapping() for record in result.integrated_claims
+                    ],
+                },
                 status_code=202,
             )
         except PermissionError as error:

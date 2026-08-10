@@ -31,8 +31,10 @@ A 和 M 都是 TCA Server 之外的客户端，都通过 MCP 与 C 交互。
 ## 集成流程
 
 1. 人、集成 Agent 或 CI 按团队流程把 completed `work_branch` 合入目标分支。
-2. 确认目标分支已经包含该工作后，调用 `integrate_claim(project_id, claim_id)`。
-3. `integrated` 后，该 Claim 才不再参与后续冲突协调。
+2. Push 目标分支；GitHub webhook 通知 C 检查 completed `work_branch` 的提交是否已经进入默认分支历史。
+3. 检查通过后 C 自动转为 `integrated`，该 Claim 不再参与后续冲突协调。
+
+普通 A 不调用 `integrate_claim`。关闭 webhook、使用其它 Git provider，或 squash/rebase 使祖先关系无法证明时，管理员核验代码后才用它兜底。
 
 ## 状态权威
 

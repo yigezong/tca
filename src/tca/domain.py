@@ -153,6 +153,6 @@ def allowed_actions(state: ClaimState) -> tuple[str, ...]:
         ClaimState.NEEDS_HUMAN: ("get_claim_state",),
         ClaimState.BLOCKED: ("get_claim_state",),
         ClaimState.EXECUTING: ("complete_claim",),
-        ClaimState.COMPLETED: ("integrate_claim",),
+        ClaimState.COMPLETED: (),
         ClaimState.INTEGRATED: (),
     }[state]

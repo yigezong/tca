@@ -67,6 +67,13 @@ class Controller:
         self._reevaluate_waiters(integrated)
         return integrated
 
+    def list_completed_claims(self, project_id: str) -> tuple[ClaimRecord, ...]:
+        return tuple(
+            record
+            for record in self.store.list_coordination_context(project_id)
+            if record.state is ClaimState.COMPLETED
+        )
+
     def get_coordination_task(
         self, project_id: str | None = None
     ) -> CoordinationTask | None:
