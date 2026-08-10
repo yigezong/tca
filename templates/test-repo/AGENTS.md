@@ -8,11 +8,11 @@
 2. 读取 `.tca/project.yaml`，确认项目标识、TCA MCP 地址和 `token_env`。
 3. 从工作区 `.env` 读取稳定的 `TCA_AGENT_ID`。团队共享的 `TCA_API_TOKEN` 应已由 MCP 客户端从机器级环境或 secret store 读取；不要自行生成、要求人类粘贴或输出它。只读取身份时，可用 `sed -n 's/^TCA_AGENT_ID=//p' .env`。
 4. 为每个人类需求生成新的 `claim_id`，建议格式为 `<TCA_AGENT_ID>-<task-slug>`。
-5. 修改共享代码前，通过 Git 分支 `tca/claim/<TCA_AGENT_ID>/<claim_id>` 发布 `.tca/claim.yaml`。
-6. `author` 必须等于 `TCA_AGENT_ID`，`work_branch` 建议使用 `feature/<TCA_AGENT_ID>/<claim_id>`。
+5. 发布 Claim 前先 `git fetch origin`；`base_commit` 必须是此刻远端默认分支的完整 commit SHA，Claim 分支必须从该提交创建。
+6. 通过 Git 分支 `tca/claim/<TCA_AGENT_ID>/<claim_id>` 发布 `.tca/claim.yaml`。`author` 必须等于 `TCA_AGENT_ID`，`work_branch` 必须是 `feature/<TCA_AGENT_ID>/<claim_id>`，新 Claim 的 `version` 必须是 `1`。
 7. 通过 TCA MCP 查询 Claim 状态与 `allowed_actions`；Claim 调用必须带 `project_id` 和 `claim_id`。
 8. 只有 C 返回允许 `start_execution` 时才可开始修改。
-9. 修改完成后提交并 push `work_branch`，再调用 `complete_claim(project_id, claim_id)`。
+9. 从 Claim 声明的 `base_commit` 创建 `work_branch`，执行 Decision 约束后再修改代码。完成后提交并 push，最后调用 `complete_claim(project_id, claim_id)`。
 
 `completed` 表示工作分支待集成，不等于已进入目标分支。如果 Decision 要求纳入另一个 completed Claim，先获取并检查它声明的 `work_branch`，把必要工作纳入自己的基线后再编辑；无法安全处理时停止并报告。集成者只走团队正常 Git 流程；GitHub 默认分支 push 后由 TCA 自动确认 `integrated`，普通 A 不调用 `integrate_claim`。
 

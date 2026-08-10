@@ -20,7 +20,7 @@ def make_claim(claim_id: str = "claim-1") -> Claim:
         project_id="team/project",
         author="agent-a",
         base_commit="abc123",
-        work_branch=f"feature/{claim_id}",
+        work_branch=f"feature/agent-a/{claim_id}",
         goal="make a coordinated change",
         planned_paths=("src/example/**",),
     )

@@ -116,13 +116,15 @@ submit_coordination_decision(...)
 
 A 对每个人类需求执行：
 
-1. 创建 `tca/claim/<agent-id>/<claim-id>`。
-2. 在 Claim 分支提交 `.tca/claim.yaml`。
+1. `git fetch origin`，记录远端默认分支的完整 SHA 作为 `base_commit`。
+2. 从该提交创建 `tca/claim/<agent-id>/<claim-id>`，并提交 `.tca/claim.yaml`。
 3. Push Claim 分支。
 4. 调用 `wait_for_decision(project_id, claim_id)`。
 5. 只有 `allowed_actions` 包含 `start_execution` 时才开始。
-6. 创建并 push `work_branch`，推荐 `feature/<agent-id>/<claim-id>`。
+6. 从 `base_commit` 创建并 push `work_branch`，分支名固定为 `feature/<agent-id>/<claim-id>`；先满足 Decision 约束，再修改代码。
 7. 工作分支 push 后，调用 `complete_claim(project_id, claim_id)`。
+
+GitHub webhook 会拒绝基于旧默认分支提交的新 Claim，也会拒绝 `base_commit` 不在 Claim 分支历史中的 Claim。Claim 后续递增 `version` 修改范围时，`author`、`base_commit` 和 `work_branch` 保持不变。
 
 TCA 的 `completed` 不等于 merge 到默认分支。completed Claim 会继续参与协调，防止后续 Agent 忽略尚未进入基线的工作。PR、CI、merge 和最终产品取舍仍然走团队自己的集成流程；合并者只需正常 merge 和 push。GitHub 默认分支 webhook 会让 TCA 自动验证工作分支是否已进入提交历史，验证成功后转为 `integrated`。
 

@@ -24,6 +24,26 @@ class Controller:
         self.rule_checker = rule_checker
 
     def submit_claim(self, claim: Claim) -> ClaimRecord:
+        expected_work_branch = f"feature/{claim.author}/{claim.claim_id}"
+        if claim.work_branch != expected_work_branch:
+            raise ValueError(f"work_branch must be {expected_work_branch}")
+
+        try:
+            existing = self.store.get(claim.project_id, claim.claim_id)
+        except KeyError:
+            existing = None
+        if existing is not None:
+            immutable_fields = ("author", "base_commit", "work_branch")
+            changed = [
+                field
+                for field in immutable_fields
+                if getattr(existing.claim, field) != getattr(claim, field)
+            ]
+            if changed:
+                raise ValueError(
+                    "claim revisions cannot change: " + ", ".join(changed)
+                )
+
         self.store.save_received(claim)
         self.store.transition(
             claim.project_id,

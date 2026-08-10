@@ -52,3 +52,16 @@ def test_sqlite_store_migrates_global_claim_id_primary_key(tmp_path) -> None:
         assert store.get("team/project-b", "claim-1").claim.project_id == "team/project-b"
     finally:
         store.close()
+
+
+def test_new_claim_must_start_at_version_one() -> None:
+    store = ClaimStore()
+    try:
+        try:
+            store.save_received(make_claim("team/project", "claim-1", version=2))
+        except ValueError as error:
+            assert "must start at version 1" in str(error)
+        else:
+            raise AssertionError("new claim version 2 should be rejected")
+    finally:
+        store.close()

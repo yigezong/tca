@@ -54,6 +54,7 @@ sequenceDiagram
     A->>Git: push tca/claim/<agent-id>/<claim-id>
     Git->>C: POST /webhooks/github
     C->>Git: 读取 .tca/claim.yaml
+    C->>Git: 校验 base_commit 和 Claim 分支历史
     C->>DB: 保存 Claim，state=assessing
     C->>DB: queue coordination task
     M->>C: wait_for_coordination_task(project_id)
@@ -74,13 +75,15 @@ sequenceDiagram
 
 A 的流程：
 
-1. 从目标分支创建 `tca/claim/<agent-id>/<claim-id>`。
-2. 在该分支提交 `.tca/claim.yaml`。
+1. `git fetch origin`，把远端默认分支当前的完整 SHA 记录为 `base_commit`。
+2. 从 `base_commit` 创建 `tca/claim/<agent-id>/<claim-id>`，在该分支提交 `.tca/claim.yaml`；`work_branch` 固定为 `feature/<agent-id>/<claim-id>`。
 3. Push Claim 分支，让 GitHub webhook 通知 TCA。
 4. 调用 `wait_for_decision(project_id, claim_id)`。
 5. 只有 `allowed_actions` 包含 `start_execution` 时，调用 `start_execution`。
-6. 从目标分支创建 `work_branch`，修改代码，提交并 push `work_branch`。
+6. 从 Claim 的 `base_commit` 创建 `work_branch`，先满足 Decision 中的约束，再修改代码、提交并 push。
 7. 工作分支已保存到 Git provider 后，调用 `complete_claim`。
+
+首次接收 GitHub Claim 时，C 会验证 `base_commit` 等于当时远端默认分支最新提交，而且确实是 Claim 分支的祖先。旧 checkout 发出的 Claim 会被拒绝，A 必须重新 fetch 并重建 Claim 分支。Claim 后续因范围变化递增 `version` 时，可以修改目标、路径、排除项和依赖，但不能更换 `author`、`base_commit` 或 `work_branch`。
 
 `complete_claim` 只表示“这个 Claim 的工作分支已经完成并推到 Git provider”。它不表示代码已经进入 `main`。completed Claim 会继续出现在 M 收到的协调上下文里；如果后续 Claim 与它重叠，M 必须要求后续 A 先检查并纳入该 `work_branch`，或者返回 `needs_human`。不能因为前一个 Agent 已结束就假设它的代码已经进入基线。
 
@@ -133,6 +136,7 @@ Claim 的身份是 `(project_id, claim_id)`。不同项目可以复用同一个 
 
 重要规则：
 
+- 新 Claim 从 `version: 1` 开始；修订必须递增，且不能改变身份、基线和工作分支。
 - `wait_for_decision` 会穿过 `received`、`assessing`、`waiting` 继续等，直到超时或出现最终可行动状态。
 - `complete_claim` 后，C 会重新评估等待该 Claim 的其它 Claim，并把 completed 工作保留在 M 的协调上下文里。
 - GitHub 默认分支 push 后，C 只自动集成祖先关系得到证明的 completed Claim。
@@ -254,6 +258,8 @@ tca/claim/<agent-id>/<claim-id>
 ```
 
 `<agent-id>` 必须等于 `.tca/claim.yaml` 的 `author`。`<claim-id>` 必须等于 `.tca/claim.yaml` 的 `claim_id`。
+
+发布新 Claim 前，A 先 fetch 远端默认分支，并把其完整 SHA 写入 `base_commit`。Claim 分支从这个提交创建，`work_branch` 固定为 `feature/<agent-id>/<claim-id>`。Webhook 会核对默认分支最新 SHA 和 Claim 分支祖先关系；因此旧基线不会悄悄进入 C。后续 Claim 修订沿用原来的 `author`、`base_commit` 和 `work_branch`。
 
 Webhook 的 Payload URL、secret 和事件选择见第 6 节。一个 repo 只配置一次，不随成员或任务重复配置。
 
@@ -418,3 +424,17 @@ submit_claim -> assessing -> M decision -> wait/start/complete -> integrate
 - 自定义 Claim 分支前缀或 Claim 文件路径。
 - GitHub status check / CI 门禁。
 - 多用户 token、项目级权限和审计后台。
+
+## 10. 测试结果应该怎么理解
+
+验证一次 TCA 协作实验时，至少分三层：
+
+| 层次 | 证明什么 | 不能证明什么 |
+|---|---|---|
+| TCA 自身测试 | 状态机、webhook、MCP 和存储按设计工作 | 被测业务功能正确 |
+| 被测 repo 测试 | 最终代码满足 repo 当前测试 | Agent 没有漏掉测试之外的边界条件 |
+| 外部验收测试 | 最终代码满足独立评价标准 | 所有其它功能都正确 |
+
+Agent 可以阅读并修改被测 repo 自带测试，所以这些测试通过是必要条件，但不是独立验收。CooperBench 一类测试应在 Agent 完成后，由评测者把官方 `tests.patch` 应用到临时 clone 中运行；首次实现时不要把官方测试交给 Agent。若官方测试失败，再把失败需求交给 Agent 走一个新的 Claim，可以验证“发现问题、返工、重新协调、集成、复验”的团队闭环，但这不再是盲测一次通过率。
+
+一次完整实验应记录：每个 Claim 和 Decision、分支与提交关系、状态转换、repo 测试、外部测试、失败与返工，以及最终默认分支。没有外部测试时，只能说 TCA 协作流程跑通，不能说 benchmark 功能已经通过。

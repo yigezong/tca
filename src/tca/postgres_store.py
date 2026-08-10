@@ -109,6 +109,10 @@ class PostgresClaimStore:
             ).fetchone()
             now = _now()
             if row is None:
+                if claim.version != 1:
+                    raise ValueError(
+                        f"new claim {claim.claim_id} must start at version 1"
+                    )
                 revision = 1
                 connection.execute(
                     """INSERT INTO claims

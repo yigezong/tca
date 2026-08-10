@@ -22,6 +22,8 @@ GITHUB_API_URL = "https://api.github.com"
 class GitHubReader(Protocol):
     def load(self, repository: str, branch: str) -> dict[str, Any]: ...
 
+    def get_commit_sha(self, repository: str, ref: str) -> str: ...
+
     def is_ancestor(
         self, repository: str, ancestor: str, descendant: str
     ) -> bool: ...
@@ -69,6 +71,17 @@ class GitHubClient:
             raise ValueError("GitHub compare response is missing commit SHAs")
         return base_sha == merge_base_sha
 
+    def get_commit_sha(self, repository: str, ref: str) -> str:
+        encoded_repo = urllib.parse.quote(repository, safe="/")
+        encoded_ref = urllib.parse.quote(ref, safe="")
+        payload = self._get_json(
+            f"{GITHUB_API_URL}/repos/{encoded_repo}/commits/{encoded_ref}"
+        )
+        sha = str(payload.get("sha", ""))
+        if not sha:
+            raise ValueError("GitHub commit response is missing sha")
+        return sha
+
     def _get_json(self, url: str) -> dict[str, Any]:
         headers = {
             "Accept": "application/vnd.github+json",
@@ -102,13 +115,11 @@ def verify_github_signature(secret: str, body: bytes, signature: str | None) -> 
     return hmac.compare_digest(signature, f"sha256={expected}")
 
 
-def parse_claim_branch(branch: str) -> tuple[str | None, str] | None:
+def parse_claim_branch(branch: str) -> tuple[str, str] | None:
     if not branch.startswith(CLAIM_BRANCH_PREFIX):
         return None
     suffix = branch.removeprefix(CLAIM_BRANCH_PREFIX).strip("/")
     parts = [part for part in suffix.split("/") if part]
-    if len(parts) == 1:
-        return None, parts[0]
     if len(parts) == 2:
         return parts[0], parts[1]
     return None
@@ -163,8 +174,22 @@ class GitHubWebhookHandler:
             raise ValueError("claim_id does not match Claim branch")
         if value["project_id"] != repository:
             raise ValueError("project_id does not match GitHub repository")
-        if branch_author is not None and value.get("author") != branch_author:
+        if value.get("author") != branch_author:
             raise ValueError("author does not match Claim branch")
+        claim = Claim.from_mapping(value)
+        if not self.github.is_ancestor(repository, claim.base_commit, branch):
+            raise ValueError("base_commit is not an ancestor of the Claim branch")
+        try:
+            self.controller.get_claim_state(repository, claim_id)
+        except KeyError:
+            default_branch = str(repository_data.get("default_branch", ""))
+            if not default_branch:
+                raise ValueError("GitHub webhook is missing repository.default_branch")
+            default_head = self.github.get_commit_sha(repository, default_branch)
+            if claim.base_commit != default_head:
+                raise ValueError(
+                    "base_commit does not match the current default branch head"
+                )
         return GitHubWebhookResult(
-            claim=self.controller.submit_claim(Claim.from_mapping(value))
+            claim=self.controller.submit_claim(claim)
         )

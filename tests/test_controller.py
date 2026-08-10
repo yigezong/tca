@@ -19,7 +19,7 @@ def make_claim(
         project_id=project_id,
         author=f"agent-{claim_id}",
         base_commit="abc123",
-        work_branch=f"feature/{claim_id}",
+        work_branch=f"feature/agent-{claim_id}/{claim_id}",
         goal=f"implement {claim_id}",
         planned_paths=paths,
         dependencies=dependencies,
@@ -177,6 +177,26 @@ def test_resubmitted_claim_requires_new_version() -> None:
     )
     assert amended.claim.version == 2
     assert amended.state is ClaimState.ASSESSING
+
+
+def test_claim_rejects_non_scoped_work_branch() -> None:
+    controller = make_controller()
+    value = make_claim("claim-1", ("src/login/**",)).to_mapping()
+    value["work_branch"] = "feature/claim-1"
+
+    with pytest.raises(ValueError, match="work_branch must be"):
+        controller.submit_claim(Claim.from_mapping(value))
+
+
+def test_claim_revision_cannot_change_its_baseline() -> None:
+    controller = make_controller()
+    original = make_claim("claim-1", ("src/login/**",))
+    controller.submit_claim(original)
+    value = original.to_mapping()
+    value.update(base_commit="new-base", version=2)
+
+    with pytest.raises(ValueError, match="cannot change: base_commit"):
+        controller.submit_claim(Claim.from_mapping(value))
 
 
 def test_same_claim_id_can_exist_in_different_projects() -> None:

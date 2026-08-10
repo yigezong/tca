@@ -87,6 +87,8 @@ TCA_AGENT_ID=agent-a1
 
 以后成员只需像平常一样给 A 提需求。A 会按仓库里的 `AGENTS.md` 和 `.tca/protocol.md` 自动提交 Claim、等待、修改并完成；成员不需要手动生成 token、重复配置 webhook 或 checkout TCA Server 源码。
 
+A 发布新 Claim 前必须先 fetch 远端默认分支。Claim 的 `base_commit` 是此刻默认分支的完整 SHA，工作分支固定为 `feature/<agent-id>/<claim-id>`。GitHub webhook 会验证基线新鲜且确实位于 Claim 分支历史中；Claim 修订只能改目标、范围和依赖，不能改身份、基线或工作分支。
+
 `completed` 只表示工作分支已经 push 并可供集成，不表示它已经进入 `main`。completed Claim 会继续出现在 M 的协调上下文中，避免后续 Agent 从旧基线重复修改同一路径。集成者只需按团队流程 merge 并 push：GitHub 默认分支 webhook 会让 TCA 检查 completed 工作分支是否已进入该分支，并自动转为 `integrated`。
 
 自动确认要求 merge 后仍保留工作分支提交历史，普通 merge commit 和 fast-forward 都满足。关闭 webhook、使用其它 Git provider，或 squash/rebase 导致 TCA 无法证明祖先关系时，管理员核验后可用 `integrate_claim` 兜底；普通 A 不负责这项 TCA 记账。
