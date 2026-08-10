@@ -19,12 +19,20 @@ A 和 M 都是 TCA Server 之外的客户端，都通过 MCP 与 C 交互。
 6. 修改完成后提交并 push `work_branch`。
 7. 范围变化时停止越界修改，并通过 Claim 分支提交新版 `.tca/claim.yaml`；完成后调用 `complete_claim(project_id, claim_id)`。
 
+`complete_claim` 只表示工作分支已 push、可以集成，不表示已经进入目标分支。A 如果收到与 `state=completed` Claim 重叠的约束，必须先检查并纳入其 `work_branch`；无法安全处理时停止并交给人。
+
 ## M 的最短流程
 
 1. 常驻调用 `wait_for_coordination_task(project_id)` 等待待协调 Claim；单次检查可把 `timeout_seconds` 设为 `0`。
-2. 判断语义冲突、依赖、约束及是否需要人类。
+2. 判断语义冲突、依赖、约束及是否需要人类。`active_claims` 是尚未完成的工作，`completed_claims` 是待集成工作；与后者重叠时要求后续 A 纳入其 `work_branch`，或返回 `needs_human`。
 3. 调用 `submit_coordination_decision(project_id, claim_id, ...)` 提交建议。
 4. C 校验建议；M 不能直接把 Claim 变为 `executing` 或 `completed`。
+
+## 集成流程
+
+1. 人、集成 Agent 或 CI 按团队流程把 completed `work_branch` 合入目标分支。
+2. 确认目标分支已经包含该工作后，调用 `integrate_claim(project_id, claim_id)`。
+3. `integrated` 后，该 Claim 才不再参与后续冲突协调。
 
 ## 状态权威
 

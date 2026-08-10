@@ -11,6 +11,7 @@ TCA 是一个 Git-first 的多 Agent 协作控制服务。它不替代 Git、PR 
 | C / Controller | TCA Server，通常部署在 Vercel | 维护 Claim 状态机、校验状态转换、保存协调队列 |
 | A / 开发 Agent | 用户本机、Codex task、CI worker | 提交 Claim，等 C 放行，执行代码修改，完成 Claim |
 | M / 协调 Agent | 用户本机或团队机器，不默认云上常驻 | 领取待协调 Claim，结合 Claim 元数据和 repo 只读上下文判断冲突/依赖/风险，向 C 提交建议 |
+| 集成者 | 人、集成 Agent 或 CI | 把 completed 工作分支合入目标分支，并确认 Claim 已 integrated |
 | P / 人 | 人 | 提出目标，在机器无法自动裁决时决策 |
 | Git provider | GitHub 等 | 保存 Claim 分支、工作分支和代码历史 |
 
@@ -47,6 +48,7 @@ sequenceDiagram
     participant Git as GitHub / 被测 repo
     participant C as TCA Server / C
     participant M as M：协调 Agent
+    participant I as 集成者
     participant DB as 状态数据库
 
     A->>Git: push tca/claim/<agent-id>/<claim-id>
@@ -55,7 +57,7 @@ sequenceDiagram
     C->>DB: 保存 Claim，state=assessing
     C->>DB: queue coordination task
     M->>C: wait_for_coordination_task(project_id)
-    C-->>M: Claim + active_claims
+    C-->>M: Claim + active_claims + completed_claims
     M->>C: submit_coordination_decision(...)
     C->>DB: approved / waiting / blocked / needs_human
     A->>C: wait_for_decision(project_id, claim_id)
@@ -63,6 +65,10 @@ sequenceDiagram
     A->>C: start_execution(project_id, claim_id)
     A->>Git: push work_branch
     A->>C: complete_claim(project_id, claim_id)
+    C->>DB: state=completed（待集成）
+    I->>Git: merge work_branch into target branch
+    I->>C: integrate_claim(project_id, claim_id)
+    C->>DB: state=integrated
 ```
 
 A 的流程：
@@ -75,21 +81,23 @@ A 的流程：
 6. 从目标分支创建 `work_branch`，修改代码，提交并 push `work_branch`。
 7. 工作分支已保存到 Git provider 后，调用 `complete_claim`。
 
-`complete_claim` 只表示“这个 Claim 的工作分支已经完成并推到 Git provider”。它不表示代码已经进入 `main`。进入 `main` 仍然要走团队自己的 PR、merge、CI 或人工集成流程。TCA 负责减少同时改同一片共享代码的混乱，但不替代最终产品取舍：如果两个 completed 分支最终给出互斥结果，Git merge 仍然会冲突，需要人或集成器选择。
+`complete_claim` 只表示“这个 Claim 的工作分支已经完成并推到 Git provider”。它不表示代码已经进入 `main`。completed Claim 会继续出现在 M 收到的协调上下文里；如果后续 Claim 与它重叠，M 必须要求后续 A 先检查并纳入该 `work_branch`，或者返回 `needs_human`。不能因为前一个 Agent 已结束就假设它的代码已经进入基线。
+
+进入 `main` 仍然要走团队自己的 PR、merge、CI 或人工集成流程。确认目标分支已经包含这项工作后，集成者调用 `integrate_claim(project_id, claim_id)`。只有 `integrated` 才会把该 Claim 从后续协调上下文移除。TCA 不自动猜测某次 push 是否等价于产品层面的集成。
 
 M 的流程：
 
 1. 启动一个已经配置好 TCA MCP 的 M Agent。
 2. watch 循环调用 `wait_for_coordination_task(project_id)`。
-3. 如果 C 把一个 Claim 交给 M，M 根据 active Claim、语义冲突和风险提交决策。
-4. 当前轻量 M 没有语义模型：没有 active 路径冲突时提交 `approved`，发现冲突时提交 `waiting`。
+3. 如果 C 把一个 Claim 交给 M，M 根据 active Claim、completed-but-unintegrated Claim、语义冲突和风险提交决策。
+4. 与仍 active 的路径重叠时使用 `waiting`；只与 completed 工作重叠时，使用 `approved_with_constraints` 要求纳入其工作分支，无法安全集成时使用 `needs_human`。
 5. 处理完一条后继续等下一条。
 
 真实用户不需要 checkout 本仓库。A/M 应使用 Codex、Claude、Cursor 等客户端的原生 MCP 配置，直接连接 TCA Server 的 `/mcp`。本仓库里的 `tca-client` 只是维护者本地开发和 smoke test 的辅助命令，不是正式用户流程的一部分。
 
 当前 smoke M 只是轻量 runner。它做的是路径级自动判断，不是完整语义审查。更复杂的 M 可以在同一个 MCP 协议上实现。
 
-M 不需要 TCA Server 源码，但不能凭空做语义判断。`wait_for_coordination_task` 返回 Claim 元数据和 active claims，足够判断“计划路径是否重叠、依赖是否还没完成”。如果要判断“两个目标语义上是否冲突、某个路径修改风险多大”，M 还需要 repo 上下文。正式方案有三种：
+M 不需要 TCA Server 源码，但不能凭空做语义判断。`wait_for_coordination_task` 返回 Claim 元数据和两组协调上下文：`active_claims` 是尚未完成的工作，`completed_claims` 是已完成但尚未集成的工作。它足够判断“计划路径是否重叠、依赖是否还没完成”。如果要判断“两个目标语义上是否冲突、如何纳入 completed 工作分支”，M 还需要 repo 上下文。正式方案有三种：
 
 | M 上下文来源 | 适合场景 | 边界 |
 |---|---|---|
@@ -99,7 +107,7 @@ M 不需要 TCA Server 源码，但不能凭空做语义判断。`wait_for_coord
 
 现在的实现只提供前两层的接口基础，没有把 repo 文件内容塞进 TCA 状态机。这样保持 C 轻量，也避免把代码库内容长期存进 TCA 数据库。
 
-C 在 M 之前还有一层确定性路径规则：如果新 Claim 的 `planned_paths` 已经和 active Claim 重叠，C 会直接把它放到 `waiting`，暂时不生成 M task。等阻塞 Claim 完成后，C 再重新评估这个等待中的 Claim；如果硬冲突消失，它才会进入 M 队列。
+C 在 M 之前还有一层确定性路径规则：如果新 Claim 的 `planned_paths` 已经和仍 active 的 Claim 重叠，C 会直接把它放到 `waiting`，暂时不生成 M task。等阻塞 Claim completed 后，C 重新评估等待项；completed 工作不再形成硬等待，但会作为协调上下文交给 M，由 M 决定后续 A 如何纳入该工作。集成者确认 integrated 后，它才从上下文移除。
 
 ## 3. 状态机
 
@@ -117,18 +125,20 @@ Claim 的身份是 `(project_id, claim_id)`。不同项目可以复用同一个 
 | `needs_human` | 需要人处理 | `get_claim_state` |
 | `blocked` | 被阻断 | `get_claim_state` |
 | `executing` | A 正在执行 | `complete_claim` |
-| `completed` | 已完成 | 无 |
+| `completed` | 工作分支已完成并 push，等待进入目标分支 | `integrate_claim` |
+| `integrated` | 工作已进入目标分支 | 无 |
 
 重要规则：
 
 - `wait_for_decision` 会穿过 `received`、`assessing`、`waiting` 继续等，直到超时或出现最终可行动状态。
-- `complete_claim` 后，C 会重新评估等待该 Claim 的其它 Claim。
+- `complete_claim` 后，C 会重新评估等待该 Claim 的其它 Claim，并把 completed 工作保留在 M 的协调上下文里。
+- 只有目标分支已经包含 completed 工作时，集成者才能调用 `integrate_claim`。
 - M 不能把 Claim 直接改为 `executing` 或 `completed`。
 - A 没有 `start_execution` 权限时必须停止修改共享代码。
 
-`waiting` 不是要求 A 立刻改 Claim。它的意思是：当前 Claim 暂时不能开始，因为 `wait_for` 里的其它 Claim 还 active。A 的默认动作是继续 `wait_for_decision`。当阻塞它的 Claim `completed` 后，C 会把这个等待中的 Claim 重新放回 `assessing`，M 再次判断；如果此时没有 active 冲突，它就会变成 `approved`。只有当 A 想主动绕开冲突，比如缩小 `planned_paths` 或改依赖关系时，才需要提交新版 Claim，且 `version` 必须递增。
+`waiting` 不是要求 A 立刻改 Claim。它的意思是：当前 Claim 暂时不能开始，因为 `wait_for` 里的其它 Claim 还 active。A 的默认动作是继续 `wait_for_decision`。当阻塞项 completed 后，C 会把等待中的 Claim 重新放回 `assessing`；M 会同时看到 completed Claim 的 `work_branch`，并决定要求 A 纳入该分支、继续等待集成，或交给人。只有当 A 想主动绕开冲突，比如缩小 `planned_paths` 或改依赖关系时，才需要提交新版 Claim，且 `version` 必须递增。
 
-`wait_for_coordination_task(project_id)` 是给 M 用的取任务入口。它不是给 A 查自己状态的；A 用 `wait_for_decision`。M 调它时，C 会返回最早一个正在 `assessing` 的 Claim，以及同项目当前 active 的其它 Claim。M 根据这些信息提交 `approved`、`waiting`、`blocked` 或 `needs_human`。
+`wait_for_coordination_task(project_id)` 是给 M 用的取任务入口。它不是给 A 查自己状态的；A 用 `wait_for_decision`。M 调它时，C 会返回最早一个正在 `assessing` 的 Claim、同项目 `active_claims`，以及待集成的 `completed_claims`。M 根据这些信息提交 `approved`、`approved_with_constraints`、`waiting`、`blocked` 或 `needs_human`。
 
 ## 4. MCP/API 表面
 
@@ -141,6 +151,7 @@ Claim 的身份是 `(project_id, claim_id)`。不同项目可以复用同一个 
 | `wait_for_decision(project_id, claim_id)` | A | 等待 Claim 离开中间等待态 |
 | `start_execution(project_id, claim_id)` | A | 把获批 Claim 转为 `executing` |
 | `complete_claim(project_id, claim_id)` | A | 把执行中的 Claim 转为 `completed` |
+| `integrate_claim(project_id, claim_id)` | 集成者 | 确认 completed 工作已进入目标分支，转为 `integrated` |
 | `wait_for_coordination_task(project_id)` | M | 等待待协调 Claim；`project_id=""` 表示所有项目 |
 | `submit_coordination_decision(...)` | M | 提交 M 的协调建议，由 C 校验并落库 |
 
@@ -342,7 +353,7 @@ CooperBench 或其它非 GitHub git server 不走 `/webhooks/github`。它们可
 这时仍然使用同一个状态机：
 
 ```text
-submit_claim -> assessing -> M decision -> wait/start/complete
+submit_claim -> assessing -> M decision -> wait/start/complete -> integrate
 ```
 
 ## 8. 当前文件地图

@@ -143,3 +143,32 @@ def test_auto_decision_waits_for_overlapping_active_claims() -> None:
     assert decision["state"] == "waiting"
     assert decision["wait_for"] == ["claim-2"]
     assert decision["conflicts_with"] == ["claim-2"]
+
+
+def test_auto_decision_constrains_overlapping_completed_claims() -> None:
+    decision = auto_decision_for_task(
+        {
+            "claim": {
+                "claim": {
+                    "claim_id": "claim-2",
+                    "planned_paths": ["src/greeting.py"],
+                }
+            },
+            "active_claims": [],
+            "completed_claims": [
+                {
+                    "state": "completed",
+                    "claim": {
+                        "claim_id": "claim-1",
+                        "work_branch": "feature/agent-a1/claim-1",
+                        "planned_paths": ["src/**"],
+                    },
+                }
+            ],
+        }
+    )
+
+    assert decision["state"] == "approved_with_constraints"
+    assert decision["wait_for"] == []
+    assert decision["conflicts_with"] == ["claim-1"]
+    assert "feature/agent-a1/claim-1" in decision["constraints"][0]

@@ -15,9 +15,9 @@ class ClaimState(StrEnum):
     BLOCKED = "blocked"
     EXECUTING = "executing"
     COMPLETED = "completed"
+    INTEGRATED = "integrated"
 
 
-TERMINAL_STATES = {ClaimState.COMPLETED}
 ACTIVE_STATES = {
     ClaimState.RECEIVED,
     ClaimState.ASSESSING,
@@ -28,6 +28,7 @@ ACTIVE_STATES = {
     ClaimState.BLOCKED,
     ClaimState.EXECUTING,
 }
+COORDINATION_CONTEXT_STATES = ACTIVE_STATES | {ClaimState.COMPLETED}
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,11 +131,15 @@ class ClaimRecord:
 class CoordinationTask:
     claim: ClaimRecord
     active_claims: tuple[ClaimRecord, ...]
+    completed_claims: tuple[ClaimRecord, ...]
 
     def to_mapping(self) -> dict[str, Any]:
         return {
             "claim": self.claim.to_mapping(),
             "active_claims": [record.to_mapping() for record in self.active_claims],
+            "completed_claims": [
+                record.to_mapping() for record in self.completed_claims
+            ],
         }
 
 
@@ -148,5 +153,6 @@ def allowed_actions(state: ClaimState) -> tuple[str, ...]:
         ClaimState.NEEDS_HUMAN: ("get_claim_state",),
         ClaimState.BLOCKED: ("get_claim_state",),
         ClaimState.EXECUTING: ("complete_claim",),
-        ClaimState.COMPLETED: (),
+        ClaimState.COMPLETED: ("integrate_claim",),
+        ClaimState.INTEGRATED: (),
     }[state]

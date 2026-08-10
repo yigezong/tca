@@ -17,6 +17,7 @@ GitHub Claim 分支 ── webhook ──► TCA Server / C ──► Postgres
 - **C / TCA Server**：轻量云服务，只维护状态机、队列和鉴权。
 - **A / 开发 Agent**：在被测 repo 工作区提交 Claim，获批后改代码。
 - **M / 协调 Agent**：本机运行的外部 Agent，通过 MCP 领取协调任务并提交决策。
+- **集成者**：把 completed 工作分支合入目标分支后，调用 `integrate_claim`。
 - **Git provider**：当前支持 GitHub webhook，Claim 分支固定为 `tca/claim/<agent-id>/<claim-id>`。
 
 ## 本地开发
@@ -85,6 +86,8 @@ TCA_AGENT_ID=agent-a1
 ```
 
 以后成员只需像平常一样给 A 提需求。A 会按仓库里的 `AGENTS.md` 和 `.tca/protocol.md` 自动提交 Claim、等待、修改并完成；成员不需要手动生成 token、重复配置 webhook 或 checkout TCA Server 源码。
+
+`completed` 只表示工作分支已经 push 并可供集成，不表示它已经进入 `main`。completed Claim 会继续出现在 M 的协调上下文中，避免后续 Agent 从旧基线重复修改同一路径。PR、merge 或集成完成后，集成者调用 `integrate_claim(project_id, claim_id)`；`integrated` 才表示这项工作已进入团队目标分支。
 
 M 做路径级判断时可以只连 TCA MCP；做语义判断时，推荐直接运行在自己管理的被测 repo 只读 checkout 根目录。M 使用同一个团队 token，但不需要 `TCA_AGENT_ID`。
 

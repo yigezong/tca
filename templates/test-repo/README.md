@@ -124,4 +124,4 @@ A 对每个人类需求执行：
 6. 创建并 push `work_branch`，推荐 `feature/<agent-id>/<claim-id>`。
 7. 工作分支 push 后，调用 `complete_claim(project_id, claim_id)`。
 
-TCA 的 `completed` 不等于 merge 到 `main`。PR、CI、merge 和最终产品取舍仍然走团队自己的集成流程。
+TCA 的 `completed` 不等于 merge 到 `main`。completed Claim 会继续参与协调，防止后续 Agent 忽略尚未进入基线的工作。PR、CI、merge 和最终产品取舍仍然走团队自己的集成流程；确认目标分支已包含工作后，由合并者调用 `integrate_claim(project_id, claim_id)`。`integrated` 才表示这项工作已经进入目标分支。

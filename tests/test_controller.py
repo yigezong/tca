@@ -73,6 +73,91 @@ def test_overlapping_claim_waits_and_reassesses_after_completion() -> None:
     task = controller.get_coordination_task("team/project")
     assert task is not None
     assert task.claim.claim.claim_id == "claim-2"
+    assert task.active_claims == ()
+    assert [(record.claim.claim_id, record.state) for record in task.completed_claims] == [
+        ("claim-1", ClaimState.COMPLETED)
+    ]
+
+
+def test_new_overlap_sees_completed_unintegrated_claim() -> None:
+    controller = make_controller()
+    first = controller.submit_claim(make_claim("claim-1", ("src/session/**",)))
+    approve_claim(controller, first.claim.claim_id)
+    controller.start_execution(first.claim.project_id, first.claim.claim_id)
+    controller.complete_claim(first.claim.project_id, first.claim.claim_id)
+
+    second = controller.submit_claim(make_claim("claim-2", ("src/session/api.py",)))
+
+    assert second.state is ClaimState.ASSESSING
+    task = controller.get_coordination_task("team/project")
+    assert task is not None
+    assert task.active_claims == ()
+    assert [(record.claim.claim_id, record.state) for record in task.completed_claims] == [
+        ("claim-1", ClaimState.COMPLETED)
+    ]
+
+
+def test_integrated_claim_is_removed_from_coordination_context() -> None:
+    controller = make_controller()
+    first = controller.submit_claim(make_claim("claim-1", ("src/session/**",)))
+    approve_claim(controller, first.claim.claim_id)
+    controller.start_execution(first.claim.project_id, first.claim.claim_id)
+    completed = controller.complete_claim(first.claim.project_id, first.claim.claim_id)
+    assert completed.state is ClaimState.COMPLETED
+    assert controller.get_claim_state("team/project", "claim-1")[
+        "allowed_actions"
+    ] == ["integrate_claim"]
+
+    integrated = controller.integrate_claim(
+        first.claim.project_id, first.claim.claim_id
+    )
+    second = controller.submit_claim(make_claim("claim-2", ("src/session/api.py",)))
+
+    assert integrated.state is ClaimState.INTEGRATED
+    assert controller.get_claim_state("team/project", "claim-1")[
+        "allowed_actions"
+    ] == []
+    task = controller.get_coordination_task("team/project")
+    assert task is not None
+    assert task.active_claims == ()
+    assert task.completed_claims == ()
+
+
+def test_claim_cannot_be_integrated_before_completion() -> None:
+    controller = make_controller()
+    claim = controller.submit_claim(make_claim("claim-1", ("src/session/**",)))
+
+    with pytest.raises(ValueError, match="assessing -> integrated"):
+        controller.integrate_claim(claim.claim.project_id, claim.claim.claim_id)
+
+
+def test_integration_reassesses_claim_waiting_for_completed_work() -> None:
+    controller = make_controller()
+    first = controller.submit_claim(make_claim("claim-1", ("src/session/**",)))
+    approve_claim(controller, first.claim.claim_id)
+    controller.start_execution(first.claim.project_id, first.claim.claim_id)
+    controller.complete_claim(first.claim.project_id, first.claim.claim_id)
+    second = controller.submit_claim(make_claim("claim-2", ("src/session/api.py",)))
+    controller.submit_coordination_decision(
+        second.claim.project_id,
+        second.claim.claim_id,
+        Decision(
+            ClaimState.WAITING,
+            "wait for the completed branch to reach main",
+            wait_for=(first.claim.claim_id,),
+            conflicts_with=(first.claim.claim_id,),
+        ),
+    )
+
+    controller.integrate_claim(first.claim.project_id, first.claim.claim_id)
+
+    reassessed = controller.store.get(second.claim.project_id, second.claim.claim_id)
+    assert reassessed.state is ClaimState.ASSESSING
+    task = controller.get_coordination_task("team/project")
+    assert task is not None
+    assert task.claim.claim.claim_id == second.claim.claim_id
+    assert task.active_claims == ()
+    assert task.completed_claims == ()
 
 
 def test_resubmitted_claim_requires_new_version() -> None:

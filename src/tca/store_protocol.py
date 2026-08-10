@@ -23,6 +23,10 @@ class Store(Protocol):
         self, project_id: str, exclude: str | None = None
     ) -> list[ClaimRecord]: ...
 
+    def list_coordination_context(
+        self, project_id: str, exclude: str | None = None
+    ) -> list[ClaimRecord]: ...
+
     def queue_coordination(self, project_id: str, claim_id: str) -> None: ...
 
     def next_coordination_claim(

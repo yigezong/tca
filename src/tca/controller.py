@@ -31,8 +31,10 @@ class Controller:
             {ClaimState.RECEIVED},
             ClaimState.ASSESSING,
         )
-        active = self.store.list_active(claim.project_id, exclude=claim.claim_id)
-        return self._assess_or_queue(claim, active)
+        context = self.store.list_coordination_context(
+            claim.project_id, exclude=claim.claim_id
+        )
+        return self._assess_or_queue(claim, context)
 
     def get_claim_state(self, project_id: str, claim_id: str) -> dict[str, object]:
         record = self.store.get(project_id, claim_id)
@@ -55,6 +57,16 @@ class Controller:
         self._reevaluate_waiters(completed)
         return completed
 
+    def integrate_claim(self, project_id: str, claim_id: str) -> ClaimRecord:
+        integrated = self.store.transition(
+            project_id,
+            claim_id,
+            {ClaimState.COMPLETED},
+            ClaimState.INTEGRATED,
+        )
+        self._reevaluate_waiters(integrated)
+        return integrated
+
     def get_coordination_task(
         self, project_id: str | None = None
     ) -> CoordinationTask | None:
@@ -67,10 +79,16 @@ class Controller:
             raise ValueError(
                 f"claim {task_project_id}:{claim_id} is no longer awaiting coordination"
             )
-        active = self.store.list_active(
+        context = self.store.list_coordination_context(
             record.claim.project_id, exclude=record.claim.claim_id
         )
-        return CoordinationTask(record, tuple(active))
+        active = tuple(
+            item for item in context if item.state is not ClaimState.COMPLETED
+        )
+        completed = tuple(
+            item for item in context if item.state is ClaimState.COMPLETED
+        )
+        return CoordinationTask(record, active, completed)
 
     def submit_coordination_decision(
         self, project_id: str, claim_id: str, decision: Decision
@@ -109,14 +127,14 @@ class Controller:
         self.store.queue_coordination(claim.project_id, claim.claim_id)
         return self.store.get(claim.project_id, claim.claim_id)
 
-    def _reevaluate_waiters(self, completed: ClaimRecord) -> None:
+    def _reevaluate_waiters(self, trigger: ClaimRecord) -> None:
         active = self.store.list_active(
-            completed.claim.project_id, exclude=completed.claim.claim_id
+            trigger.claim.project_id, exclude=trigger.claim.claim_id
         )
         for record in active:
             if record.state is not ClaimState.WAITING or record.decision is None:
                 continue
-            if completed.claim.claim_id not in record.decision.wait_for:
+            if trigger.claim.claim_id not in record.decision.wait_for:
                 continue
             self.store.transition(
                 record.claim.project_id,
@@ -124,7 +142,7 @@ class Controller:
                 {ClaimState.WAITING},
                 ClaimState.ASSESSING,
             )
-            others = self.store.list_active(
+            others = self.store.list_coordination_context(
                 record.claim.project_id, exclude=record.claim.claim_id
             )
             self._assess_or_queue(record.claim, others)

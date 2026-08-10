@@ -14,6 +14,8 @@
 8. 只有 C 返回允许 `start_execution` 时才可开始修改。
 9. 修改完成后提交并 push `work_branch`，再调用 `complete_claim(project_id, claim_id)`。
 
+`completed` 表示工作分支待集成，不等于已进入目标分支。如果 Decision 要求纳入另一个 completed Claim，先获取并检查它声明的 `work_branch`，把必要工作纳入自己的基线后再编辑；无法安全处理时停止并报告。目标分支真正包含某个 completed 工作后，集成者调用 `integrate_claim`。
+
 C 返回的状态是唯一权威状态，不得依据本地上下文自行推断。
 
 如果当前 Agent 客户端没有暴露 TCA MCP tools，说明这台机器的 MCP 地址或共享 token 还没有正确配置。此时必须停止共享代码修改并向人报告，不能自行生成 token，也不能假设本机存在 TCA Server 源码仓库或使用 `../proj_tca` 之类的维护者路径。

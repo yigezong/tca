@@ -6,7 +6,14 @@ import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .domain import ACTIVE_STATES, Claim, ClaimRecord, ClaimState, Decision
+from .domain import (
+    ACTIVE_STATES,
+    COORDINATION_CONTEXT_STATES,
+    Claim,
+    ClaimRecord,
+    ClaimState,
+    Decision,
+)
 
 
 def _now() -> str:
@@ -151,7 +158,7 @@ class ClaimStore:
                         f"claim {claim.claim_id} version must be greater than {row['claim_version']}"
                     )
                 if ClaimState(row["state"]) not in ACTIVE_STATES:
-                    raise ValueError(f"claim {claim.claim_id} is already terminal")
+                    raise ValueError(f"claim {claim.claim_id} is no longer revisable")
                 revision = row["revision"] + 1
                 self._connection.execute(
                     """UPDATE claims SET claim_version = ?, state = ?, revision = ?,
@@ -220,7 +227,22 @@ class ClaimStore:
     def list_active(
         self, project_id: str, exclude: str | None = None
     ) -> list[ClaimRecord]:
-        values = tuple(state.value for state in ACTIVE_STATES)
+        return self._list_by_states(project_id, ACTIVE_STATES, exclude)
+
+    def list_coordination_context(
+        self, project_id: str, exclude: str | None = None
+    ) -> list[ClaimRecord]:
+        return self._list_by_states(
+            project_id, COORDINATION_CONTEXT_STATES, exclude
+        )
+
+    def _list_by_states(
+        self,
+        project_id: str,
+        states: set[ClaimState],
+        exclude: str | None,
+    ) -> list[ClaimRecord]:
+        values = tuple(state.value for state in states)
         placeholders = ",".join("?" for _ in values)
         query = (
             f"SELECT * FROM claims WHERE project_id = ? "

@@ -201,8 +201,14 @@ def auto_decision_for_task(task: Mapping[str, Any]) -> dict[str, object]:
 
     planned_paths = [str(path) for path in claim.get("planned_paths", ())]
     conflicts: list[str] = []
+    completed_conflicts: list[tuple[str, str]] = []
     constraints: list[str] = []
-    for raw_record in task.get("active_claims", ()):
+    records = [
+        (raw_record, False) for raw_record in task.get("active_claims", ())
+    ] + [
+        (raw_record, True) for raw_record in task.get("completed_claims", ())
+    ]
+    for raw_record, is_completed in records:
         if not isinstance(raw_record, Mapping):
             continue
         active_claim = raw_record.get("claim")
@@ -215,7 +221,11 @@ def auto_decision_for_task(task: Mapping[str, Any]) -> dict[str, object]:
             for occupied in active_paths
         ):
             claim_id = str(active_claim.get("claim_id", ""))
-            if claim_id:
+            state = str(raw_record.get("state", ""))
+            work_branch = str(active_claim.get("work_branch", ""))
+            if (is_completed or state == "completed") and claim_id:
+                completed_conflicts.append((claim_id, work_branch))
+            elif claim_id:
                 conflicts.append(claim_id)
             constraints.extend(active_paths)
 
@@ -226,6 +236,21 @@ def auto_decision_for_task(task: Mapping[str, Any]) -> dict[str, object]:
             "constraints": sorted(set(constraints)),
             "wait_for": conflicts,
             "conflicts_with": conflicts,
+        }
+    if completed_conflicts:
+        branches = [
+            f"{claim_id} ({work_branch})" if work_branch else claim_id
+            for claim_id, work_branch in completed_conflicts
+        ]
+        return {
+            "state": "approved_with_constraints",
+            "reason": "Overlapping completed work is not yet integrated.",
+            "constraints": [
+                "Inspect and incorporate the completed work before editing: "
+                + ", ".join(branches)
+            ],
+            "wait_for": [],
+            "conflicts_with": [claim_id for claim_id, _ in completed_conflicts],
         }
     return {
         "state": "approved",
@@ -299,6 +324,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     complete = subparsers.add_parser("complete", help="A: mark claim completed.")
     complete.add_argument("claim_id")
+
+    integrate = subparsers.add_parser(
+        "integrate", help="Integrator: confirm completed work is in the target branch."
+    )
+    integrate.add_argument("claim_id")
 
     return parser
 
@@ -439,6 +469,13 @@ async def run(args: argparse.Namespace) -> dict[str, Any] | None:
             mcp_url=mcp_url,
             token=token,
             name="complete_claim",
+            arguments={"project_id": project_id, "claim_id": args.claim_id},
+        )
+    if args.command == "integrate":
+        return await call_tool(
+            mcp_url=mcp_url,
+            token=token,
+            name="integrate_claim",
             arguments={"project_id": project_id, "claim_id": args.claim_id},
         )
     raise AssertionError(args.command)

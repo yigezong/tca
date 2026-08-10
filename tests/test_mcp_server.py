@@ -35,6 +35,7 @@ async def test_mcp_exposes_wait_for_coordination_task() -> None:
     assert "wait_for_coordination_task" in {tool.name for tool in tools}
     assert "get_coordination_task" not in {tool.name for tool in tools}
     assert "submit_claim" in {tool.name for tool in tools}
+    assert "integrate_claim" in {tool.name for tool in tools}
 
 
 @pytest.mark.anyio
@@ -74,6 +75,7 @@ async def test_wait_for_coordination_task_returns_pending_task() -> None:
     task = result["result"]
     assert task["claim"]["claim"]["claim_id"] == "claim-1"
     assert task["active_claims"] == []
+    assert task["completed_claims"] == []
 
 
 @pytest.mark.anyio
@@ -127,3 +129,23 @@ async def test_wait_for_decision_waits_through_waiting_claims() -> None:
 
     assert result["state"] == "approved"
     assert result["allowed_actions"] == ["start_execution"]
+
+
+@pytest.mark.anyio
+async def test_integrate_claim_marks_completed_work_integrated() -> None:
+    mcp, controller = make_mcp()
+    claim = controller.submit_claim(make_claim("claim-1"))
+    controller.submit_coordination_decision(
+        claim.claim.project_id,
+        claim.claim.claim_id,
+        Decision(ClaimState.APPROVED, "claim may run"),
+    )
+    controller.start_execution(claim.claim.project_id, claim.claim.claim_id)
+    controller.complete_claim(claim.claim.project_id, claim.claim.claim_id)
+
+    _, result = await mcp.call_tool(
+        "integrate_claim",
+        {"project_id": "team/project", "claim_id": "claim-1"},
+    )
+
+    assert result["state"] == "integrated"

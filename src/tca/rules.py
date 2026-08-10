@@ -41,6 +41,8 @@ class BasicRuleChecker:
         conflicts: list[str] = []
         constraints: list[str] = []
         for record in active_claims:
+            if record.state is ClaimState.COMPLETED:
+                continue
             overlap = any(
                 paths_overlap(candidate, occupied)
                 for candidate in claim.planned_paths
