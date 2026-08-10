@@ -44,7 +44,7 @@ Claim 的运行时身份是 `(project_id, claim_id)`。不同项目可以使用�
 
 GitHub Claim 分支命名为 `tca/claim/<agent-id>/<claim-id>`。`agent-id` 必须等于 `.tca/claim.yaml` 的 `author`，`claim-id` 必须等于 `.tca/claim.yaml` 的 `claim_id`。首次提交前 C 会确认 `base_commit` 等于远端默认分支当前提交，并且是 Claim 分支的祖先。每个逻辑任务使用新的 `claim_id`；同一个 Claim 需要补充范围时复用同一分支并递增 `version`，但不能改变 `author`、`base_commit` 或 `work_branch`。
 
-`agent-id` 是每个 Agent 工作区的稳定身份，从本机环境变量 `TCA_AGENT_ID` 读取。`work_branch` 固定为 `feature/<agent-id>/<claim-id>`，避免不同 Agent 的工作分支互相覆盖。
+`TCA_AGENT_ID` 是每个 Agent 工作区的稳定身份。`agent-m` 是 M 工作区的保留值；其它值表示 A，并作为 Claim 的 `agent-id`。A 的 `work_branch` 固定为 `feature/<agent-id>/<claim-id>`，避免不同 Agent 的工作分支互相覆盖。
 
 如果 MCP 不可连接、Claim 状态不明确或所需操作不在 `allowed_actions` 中，Agent 必须停止共享范围修改并向人报告。
 
@@ -58,13 +58,13 @@ GitHub Claim 分支命名为 `tca/claim/<agent-id>/<claim-id>`。`agent-id` 必�
 
 仓库只提交服务地址和 token 环境变量名。成员把收到的 `TCA_API_TOKEN` 保存到 MCP 客户端的机器级环境或 secret store，一台机器通常只需配置一次；不得把真实值提交到 repo、写进 prompt 或输出到日志。
 
-A 工作区需要自己的本地运行环境配置。可复制仓库根目录的 `.env.example` 为 `.env`：
+每个 A/M 工作区都需要自己的本地身份配置。可复制仓库根目录的 `.env.example` 为 `.env`：
 
 ```bash
 cp .env.example .env
 ```
 
-然后只填写这个工作区的稳定身份：
+然后只填写这个工作区的稳定身份。A 使用自己的 ID：
 
 ```text
 TCA_AGENT_ID=agent-a1
@@ -72,6 +72,6 @@ TCA_AGENT_ID=agent-a1
 
 并行 A 使用不同的 `TCA_AGENT_ID`。`.env` 必须被 `.gitignore` 忽略，不得提交。
 
-M 不需要 `TCA_AGENT_ID`，也不复用 A 的工作区。M 使用同一个团队 token 连接 MCP；做语义判断时应自己 clone 一份被测 repo，并直接以该 repo 根目录作为 M task 的工作目录。`project_id` 和 MCP URL 从 `.tca/project.yaml` 读取。M 持续调用 `wait_for_coordination_task(project_id)`；只有 Claim 元数据时，它只能做路径级和依赖级判断。
+M 使用保留身份 `TCA_AGENT_ID=agent-m`，也不复用 A 的工作区。M 使用同一个团队 token 连接 MCP；做语义判断时应自己 clone 一份被测 repo，并直接以该 repo 根目录作为 M task 的工作目录。`project_id` 和 MCP URL 从 `.tca/project.yaml` 读取。M 持续调用 `wait_for_coordination_task(project_id)`；只有 Claim 元数据时，它只能做路径级和依赖级判断。
 
 真实用户不需要 checkout TCA Server 源码仓库。如果当前 Agent 客户端没有暴露 TCA MCP tools，说明客户端 MCP 还没有配置好；Agent 必须停止共享代码修改并向人报告。

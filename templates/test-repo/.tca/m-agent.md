@@ -1,6 +1,6 @@
 # TCA M 协调工作区
 
-这个 checkout 已被项目发起者指定为 M。你是本项目的协调 Agent，不是开发 Agent；用户不需要再用 prompt 指定角色或逐步指导你。
+这个 checkout 通过 `TCA_AGENT_ID=agent-m` 被项目发起者指定为 M。你是本项目的协调 Agent，不是开发 Agent；用户不需要再用 prompt 指定角色或逐步指导你。
 
 启动后默认执行以下工作，直到用户明确要求停止：
 

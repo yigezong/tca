@@ -71,13 +71,13 @@ mcp:
   token_env: TCA_API_TOKEN
 ```
 
-项目发起者还要在被测 GitHub repo 配置一次 `/webhooks/github`，并安排一个 M 使用自己的 repo checkout 持续领取协调任务。指定 M 时把模板中的 `.tca/m-agent.md` 复制为该 checkout 根目录的 `AGENTS.override.md`；Codex 以后会自动识别这个工作区的 M 身份。这些都不需要每个成员重复配置。
+项目发起者还要在被测 GitHub repo 配置一次 `/webhooks/github`，并安排一个 M 使用自己的 repo checkout 持续领取协调任务。把该 checkout 的本地身份设为 `TCA_AGENT_ID=agent-m` 后，共享 `AGENTS.md` 会自动加载 M 规则。这些都不需要每个成员重复配置。
 
 每位成员第一次加入时只做三件事：
 
 1. Clone 被测 repo，并配置自己的 GitHub 凭证。
 2. 从项目发起者处领取共享 `TCA_API_TOKEN`，保存到 MCP 客户端的机器级环境或 secret store；按 `.tca/project.yaml` 配置原生 MCP 连接。
-3. 为每个并行 A 工作区设置唯一且稳定的 `TCA_AGENT_ID`。
+3. 为每个 Agent 工作区设置 `TCA_AGENT_ID`：A 使用唯一且稳定的 ID，M 使用保留值 `agent-m`。
 
 A 工作区本地 `.env` 只需要身份：
 
@@ -93,7 +93,7 @@ A 发布新 Claim 前必须先 fetch 远端默认分支。Claim 的 `base_commit
 
 自动确认要求 merge 后仍保留工作分支提交历史，普通 merge commit 和 fast-forward 都满足。关闭 webhook、使用其它 Git provider，或 squash/rebase 导致 TCA 无法证明祖先关系时，管理员核验后可用 `integrate_claim` 兜底；普通 A 不负责这项 TCA 记账。
 
-M 做路径级判断时可以只连 TCA MCP；做语义判断时，推荐直接运行在自己管理的被测 repo 只读 checkout 根目录。M 使用同一个团队 token，但不需要 `TCA_AGENT_ID`。`AGENTS.override.md` 是本地且被忽略的工作区标记，用户无需在每个 task 的 prompt 里重复说明 M 角色。
+M 做路径级判断时可以只连 TCA MCP；做语义判断时，推荐直接运行在自己管理的被测 repo 只读 checkout 根目录。M 使用同一个团队 token，并通过本地 `TCA_AGENT_ID=agent-m` 自动获得协调角色；用户无需在每个 task 的 prompt 里重复说明 M 角色。
 
 真实用户不需要 checkout 本仓库。A/M 使用 Codex、Claude、Cursor 等客户端的原生 MCP 配置，直接连接 `https://tca.example.com/mcp`。本仓库自带的 `tca-client` 只是维护者本地开发和 smoke test 的辅助命令。
 

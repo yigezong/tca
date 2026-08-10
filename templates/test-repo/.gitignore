@@ -1,5 +1,4 @@
 .env
-/AGENTS.override.md
 .venv/
 __pycache__/
 .pytest_cache/

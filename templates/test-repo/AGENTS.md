@@ -1,12 +1,18 @@
 # TCA 被测仓库协作入口
 
-本仓库已接入 Team Code Agent（TCA）协议。人类给你的普通需求就是产品目标；不要要求人类在 prompt 里额外指定 A/M 角色。作为开发 Agent，你在修改共享代码前必须先通过 TCA 发布 Claim 并等待 C 放行。
+本仓库已接入 Team Code Agent（TCA）协议。启动时先用 `sed -n 's/^TCA_AGENT_ID=//p' .env` 读取工作区身份，不要要求人类在 prompt 里指定 A/M 角色：
+
+- 值为 `agent-m`：这个工作区是 M。立即阅读并只遵循 `.tca/m-agent.md`，不要执行下面的 A 流程。
+- 其它非空值：这个工作区是 A。人类给你的普通需求就是产品目标，按下面流程工作。
+- 缺失或为空：停止并报告工作区尚未设置 `TCA_AGENT_ID`。
+
+作为 A，你在修改共享代码前必须先通过 TCA 发布 Claim 并等待 C 放行。
 
 最小流程：
 
 1. 阅读 `.tca/protocol.md`。
 2. 读取 `.tca/project.yaml`，确认项目标识、TCA MCP 地址和 `token_env`。
-3. 从工作区 `.env` 读取稳定的 `TCA_AGENT_ID`。团队共享的 `TCA_API_TOKEN` 应已由 MCP 客户端从机器级环境或 secret store 读取；不要自行生成、要求人类粘贴或输出它。只读取身份时，可用 `sed -n 's/^TCA_AGENT_ID=//p' .env`。
+3. 使用已读取的稳定 `TCA_AGENT_ID`。团队共享的 `TCA_API_TOKEN` 应已由 MCP 客户端从机器级环境或 secret store 读取；不要自行生成、要求人类粘贴或输出它。
 4. 为每个人类需求生成新的 `claim_id`，建议格式为 `<TCA_AGENT_ID>-<task-slug>`。
 5. 发布 Claim 前先 `git fetch origin`；`base_commit` 必须是此刻远端默认分支的完整 commit SHA，Claim 分支必须从该提交创建。
 6. 通过 Git 分支 `tca/claim/<TCA_AGENT_ID>/<claim_id>` 发布 `.tca/claim.yaml`。`author` 必须等于 `TCA_AGENT_ID`，`work_branch` 必须是 `feature/<TCA_AGENT_ID>/<claim_id>`，新 Claim 的 `version` 必须是 `1`。
