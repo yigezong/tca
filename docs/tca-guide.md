@@ -93,7 +93,7 @@ A 的流程：
 
 M 的流程：
 
-1. 启动一个已经配置好 TCA MCP 的 M Agent。
+1. 在已指定为 M 的独立 checkout 中启动一个已经配置好 TCA MCP 的 Agent；它从本地 `AGENTS.override.md` 自动获得 M 身份和工作规则。
 2. watch 循环调用 `wait_for_coordination_task(project_id)`。
 3. 如果 C 把一个 Claim 交给 M，M 根据 active Claim、completed-but-unintegrated Claim、语义冲突和风险提交决策。
 4. 与仍 active 的路径重叠时使用 `waiting`；只与 completed 工作重叠时，使用 `approved_with_constraints` 要求纳入其工作分支，无法安全集成时使用 `needs_human`。
@@ -196,6 +196,7 @@ GitHub webhook 用 `GITHUB_WEBHOOK_SECRET` 签名校验，不使用 `TCA_API_TOK
 | `TCA_AGENT_ID` | 每个 A 工作区设置 | 一个 A clone/worktree | 工作区 `.env` 或本地环境 | 否 |
 | GitHub 凭证 | 每位成员 | 一个 GitHub 用户 | credential manager / SSH agent | 否 |
 | M 的 repo checkout | 运行 M 的人或团队机器 | 一个项目的 M | M 自己的本地目录 | 否 |
+| `AGENTS.override.md` | 指定 M 时从模板复制一次 | 一个 M checkout | M repo 根目录 | 否 |
 
 当前极简鉴权模型只有一个 Server 级共享 `TCA_API_TOKEN`。它表示“允许访问这个 TCA Server”，不是个人或项目身份：Server 管理者生成一次，获准访问该实例的成员领取同一个值。成员不应自行生成 token。A 的身份来自 `TCA_AGENT_ID`，Git push 的人员权限来自各自的 GitHub 凭证。
 
@@ -235,7 +236,7 @@ GITHUB_TOKEN=replace-with-github-token
 3. 修改 `.tca/project.yaml`，并把模板文件提交到默认分支。
 4. 在被测 GitHub repo 配置一次 webhook。
 5. 通过安全渠道把共享 token 发给获准成员。
-6. 安排一个 M 在自己的 repo checkout 中持续等待协调任务。
+6. 安排一个 M，在它自己的 repo checkout 中复制本地 M 标记并持续等待协调任务。
 
 `.tca/project.yaml`：
 
@@ -297,6 +298,15 @@ A 的客户端必须能看到 TCA MCP tools。看不到时不要开始改共享�
 ### M：项目级协调工作区
 
 M 不需要 TCA Server 源码 checkout。推荐让 M 自己 clone 一份被测 repo，并直接以这个 repo 根目录作为 M task 的工作目录。这样 M 要看代码上下文时读当前目录就行，不需要额外路径变量。`project_id` 和 MCP URL 从当前 repo 的 `.tca/project.yaml` 读取。
+
+指定这个 checkout 为 M 只做一次：
+
+```bash
+cp .tca/m-agent.md AGENTS.override.md
+git remote set-url --push origin DISABLED
+```
+
+`AGENTS.override.md` 已被模板 `.gitignore` 忽略，只在 M checkout 本地生效，不会被提交，也不会把其它成员的 A clone 变成 M。Codex 在 repo 根目录启动 task 时会优先读取这份文件，所以用户不再需要输入 M 角色说明、轮询命令或决策规则。当前版本仍需有人或本地启动器启动这个 task；long-poll 只能让已运行的 M 持续等待，不能让 TCA Server 主动创建或复活 Codex task。
 
 M 的 MCP 客户端使用同一个团队 `TCA_API_TOKEN`，但 M 不需要 `TCA_AGENT_ID`。M 是项目级能力，不要求每位开发成员都运行一份；团队可以指定一台本机或团队机器常驻 M。
 

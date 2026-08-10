@@ -10,6 +10,7 @@
 .tca/project.yaml        项目标识和 TCA MCP 地址
 .tca/protocol.md         A/M/C 协作协议
 .tca/claim.example.yaml  Claim 示例
+.tca/m-agent.md           M 工作区的本地指令源
 AGENTS.md                给开发 Agent 读的入口说明
 .env.example             A 工作区本地身份模板
 ```
@@ -92,7 +93,10 @@ M 是单独的协调 Agent，不复用 A 工作区。
 git clone https://github.com/owner/repo.git repo-for-m
 cd repo-for-m
 git remote set-url --push origin DISABLED
+cp .tca/m-agent.md AGENTS.override.md
 ```
+
+`AGENTS.override.md` 是这个 checkout 的一次性本地 M 标记，已被 `.gitignore` 忽略，不会影响共享 repo 或其它 A clone。Codex 在这个目录启动 task 时会优先读取它，因此用户不需要再粘贴“你是 M”或协调步骤。用户只需启动 task；当前 long-poll 方案不会主动启动或复活已经退出的 Agent。
 
 M 从当前 repo 的 `.tca/project.yaml` 读取 `project_id` 和 MCP URL，并从自己的 MCP 客户端读取同一个团队 `TCA_API_TOKEN`。M 不需要 `TCA_AGENT_ID`。
 
