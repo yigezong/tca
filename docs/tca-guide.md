@@ -4,6 +4,24 @@ TCA 是一个 Git-first 的多 Agent 协作控制服务。它不替代 Git、PR 
 
 本仓库是 TCA Server 源码仓库，不是被测 repo。当前不使用 TCA 自举开发本仓库，所以根目录不放 `.tca/`、`.codex/` 或其它活配置。被测 repo 接入模板在 `templates/test-repo/`。
 
+原始项目讨论：[飞书文档](https://my.feishu.cn/wiki/YLuCwPwePiLeWzkEccKc9mqrnCh?from=from_copylink)
+
+## Motivation：TCA 要解决什么问题
+
+AI coding agent 让单个开发者写代码的速度大幅提高，但团队协调速度没有同步提高。当多个成员各自带着 Agent，在同一个项目里并行工作时，会出现一组新的协作问题。
+
+- **意图不可见**：别人只看到最终 diff，不知道某个 Agent 正准备做什么、为什么做、边界在哪里。
+- **冲突发现太晚**：两项修改即使没有文本冲突，也可能同时改变同一个接口、数据模型或产品行为。
+- **重复劳动**：多个 Agent 可能在不知道彼此存在的情况下解决同一个问题。
+- **范围逐渐扩大**：任务可能从局部修复变成公共接口修改或大范围重构，但团队仍按最初的小任务理解它。
+- **依赖和阻塞不清楚**：一项工作在等待谁、被等待的一方是否还在做、何时应该催更或释放，都没有统一记录。
+- **目标不一定明确**：使用者可能只给 Agent 一个方向。团队协调者可以替他判断到什么程度、何时必须回来询问，需要明确边界。
+- **上下文彼此割裂**：每个 Agent 只有自己的局部上下文，没有团队当前正在做什么的共同视图。
+- **流程无法只靠 Prompt 保证**：Agent 可能忘记汇报、跳过步骤或误解约定，需要一个确定性程序控制关键状态。
+- **Review 成本增加**：Reviewer 需要从大量代码反推最初目标、冲突处理和中途决策。
+
+Git 和 Pull Request 仍然重要，但它们主要处理已经产生的代码。TCA 想补上的是：**代码进入共享范围之前和执行过程中的协调**。
+
 ## 1. 角色和边界
 
 | 角色 | 运行位置 | 职责 |
@@ -189,7 +207,7 @@ GitHub webhook 用 `GITHUB_WEBHOOK_SECRET` 签名校验，不使用 `TCA_API_TOK
 | 配置 | 谁创建或设置 | 作用范围 | 放在哪里 | 是否提交 |
 |---|---|---|---|---|
 | TCA Server 环境变量 | Server 管理者 | 一个 TCA 服务 | Vercel / Server env | 否 |
-| `.tca/`、`AGENTS.md`、模板 README | 项目发起者 | 一个被测 repo | 被测 repo | 是 |
+| `.tca/`、`AGENTS.md` | 项目发起者 | 一个被测 repo | 被测 repo | 是 |
 | GitHub webhook | 项目发起者 | 一个被测 repo | GitHub repo Settings | 否 |
 | `TCA_API_TOKEN` | Server 管理者生成，成员只领取 | 当前为一个服务/团队共享 | MCP 客户端 secret store 或机器级环境 | 否 |
 | 原生 MCP 连接 | 每位成员或机器管理员 | 一台机器/一个客户端 | Codex、Claude、Cursor 等客户端配置 | 否 |
@@ -374,15 +392,39 @@ Webhook 配置：
 - Secret：和 Server env `GITHUB_WEBHOOK_SECRET` 相同
 - Events：`push`
 
-## 7. 非 GitHub 场景
+## 7. Direct 模式
 
-CooperBench 或其它非 GitHub git server 不走 `/webhooks/github`。它们可以直接通过 MCP `submit_claim(claim)` 提交同一份 Claim 数据；集成完成后由 adapter 或管理员调用 `integrate_claim` 兜底。
+Direct 模式只替换 Claim 和集成事件的传输方式，不替换状态机。它适合
+CooperBench 批测、本地 bare repo、GitLab 或其它没有 GitHub webhook adapter 的
+环境：
 
-这时仍然使用同一个状态机：
+```text
+GitHub 模式：Git push -> GitHub webhook -> GitHub adapter -> C
+Direct 模式：Git push -> local/provider adapter -> MCP submit_claim -> C
+```
+
+后续流程完全相同：
 
 ```text
 submit_claim -> assessing -> M decision -> wait/start/complete -> integrate
 ```
+
+Direct 模式不能简单理解成“不要 Git 校验，A 直接把任意 JSON 发给 C”。当前
+GitHub adapter 除了转发事件，还校验 Claim 分支名、repo 身份、默认分支最新
+`base_commit`、祖先关系，并在默认分支更新后验证 work branch 是否真的进入历史。
+TCA Server 的 `submit_claim` 只校验 Claim 数据和状态机，不可能读取调用者本机的
+Git repo。因此正式 direct adapter 必须在本地或对应 Git provider 上补回这些校验，
+校验成功后再调用 `submit_claim`；集成时也要先验证祖先关系，再调用
+`integrate_claim`。
+
+手工实验可以让 A 直接调用 `submit_claim`，但它只证明状态机可用，不能证明
+Git 基线和集成验证完整。CooperBench 正式批测应为每个 feature pair 建独立的
+本地 bare repo 和唯一 `project_id`，由 runner 内的 direct adapter 监听 Claim
+分支与默认分支。具体实现清单见根目录 `TODO.md`。
+
+GitHub 模式仍适合验证一个真实团队 repo 的完整 webhook 流程。它不适合当前的
+CooperBench 批测：GitHub adapter 强制 `project_id` 等于 `owner/repo`，重复使用
+同一 repo 会让不同 pair 共用状态，而每个 pair 都创建 repo 和 webhook 又太重。
 
 ## 8. 当前文件地图
 
@@ -392,6 +434,7 @@ submit_claim -> assessing -> M decision -> wait/start/complete -> integrate
 |---|---|
 | `README.md` | 项目入口和最小部署/使用说明 |
 | `AGENTS.md` | 本仓库 Agent 工作规则 |
+| `TODO.md` | 用户体验、CooperBench 批测和真实团队适配路线图 |
 | `.env.example` | TCA Server 环境变量模板 |
 | `.gitignore` | 忽略本地环境、缓存、数据库和 secret |
 | `app.py` | Vercel ASGI 入口 |
@@ -451,3 +494,70 @@ submit_claim -> assessing -> M decision -> wait/start/complete -> integrate
 Agent 可以阅读并修改被测 repo 自带测试，所以这些测试通过是必要条件，但不是独立验收。CooperBench 一类测试应在 Agent 完成后，由评测者把官方 `tests.patch` 应用到临时 clone 中运行；首次实现时不要把官方测试交给 Agent。若官方测试失败，再把失败需求交给 Agent 走一个新的 Claim，可以验证“发现问题、返工、重新协调、集成、复验”的团队闭环，但这不再是盲测一次通过率。
 
 一次完整实验应记录：每个 Claim 和 Decision、分支与提交关系、状态转换、repo 测试、外部测试、失败与返工，以及最终默认分支。没有外部测试时，只能说 TCA 协作流程跑通，不能说 benchmark 功能已经通过。
+
+## 11. 从零用 TCA 测 CooperBench
+
+先分清两个系统：CooperBench 提供 repo、固定基线、功能需求和独立官方测试；
+TCA 负责约束 A1/A2 在动代码前声明范围、等待协调、执行并留下可追踪状态。
+TCA 不替代 CooperBench evaluator，CooperBench 也不会自动使用 TCA。
+
+### 第一次准备
+
+1. 准备一个已经部署好的 TCA Server，并取得 MCP URL 和共享
+   `TCA_API_TOKEN`。批测 direct 模式不需要 GitHub webhook、
+   `GITHUB_TOKEN` 或 `GITHUB_WEBHOOK_SECRET`。
+2. Clone CooperBench，按其 README 安装环境并运行 `cooperbench prepare` 得到
+   dataset。
+3. 准备 CooperBench 要求的 Docker/Modal/GCP 测试后端。先用 Docker 本地验证
+   一个 pair，再决定是否上云扩容。
+4. 在运行 Agent 的机器上配置 TCA 原生 MCP；token 放环境或 secret store，
+   不放 repo、feature prompt 或日志。
+5. 准备 Agent 模型所需凭证，并给批测设置并发和费用上限。
+
+### 一个 Feature Pair 发生什么
+
+每个 pair 都必须从 dataset 对应 task 的 `setup.sh` 指定基线独立开始，不能沿用
+上一个 pair 的 repo：
+
+1. runner 读取 `setup.sh`，准备上游 repo 的固定 commit。
+2. runner 加入 TCA 模板并提交一份协作基线，然后建立本地 bare remote，以及
+   A1、A2、M 三个独立 clone。
+3. runner 为这次实验生成唯一 `project_id`，设置三个工作区的
+   `TCA_AGENT_ID`，先启动 M long-poll。
+4. A1 只收到 feature 1 的 `feature.md`，A2 只收到 feature 2 的
+   `feature.md`。官方 `feature.patch` 和 `tests.patch` 不给 Agent 看。
+5. A1/A2 各自提交 Claim 分支；local direct adapter 校验 Git 基线和分支后，
+   调 `submit_claim` 把 Claim 送进 C。
+6. C 做确定性冲突检查；需要语义判断时交给 M。A 只有在
+   `allowed_actions` 出现 `start_execution` 后才开始修改。
+7. A push 各自 work branch 并调用 `complete_claim`。`completed` 仍是待集成，
+   不是实验完成。
+8. runner 或指定开发 Agent 按 M 的约束合并两个 work branch；有冲突时恢复开发
+   Agent 解决，M 保持只读。
+9. 最终默认分支包含两个 work-branch tip 后，direct adapter 才调用
+   `integrate_claim`，两个 Claim 进入 `integrated`。
+10. runner 从最终集成树导出业务 patch，过滤 TCA 元数据和 Agent 改过的测试，
+    再交给 CooperBench 官方 evaluator 分别运行两个 feature 的 `tests.patch`。
+11. 报告同时保存 TCA 状态/Decision、commit 关系、repo 自带测试和官方测试。
+
+这里有两条不同的“通过”：两个 Claim 进入 `integrated` 只证明协作和 Git 集成
+闭环；CooperBench 官方测试通过才证明该 pair 的两个功能达到 benchmark 验收。
+
+### 从单组到批量
+
+不要直接从完整数据集起跑。顺序应是：
+
+1. 一个已知无冲突 pair，验证基础流程。
+2. 一个会产生等待或约束的 pair，验证 TCA 确实参与协调。
+3. 两个 pair 并发，验证 `project_id` 和工作目录完全隔离。
+4. `flash` 子集，观察成功率、超时和费用。
+5. `lite`，最后才是完整组合。
+
+每个 pair 使用独立 `project_id`、bare repo、clone 和日志目录；TCA Server 和
+共享 token 可以复用。失败重试必须使用新的 run id，不能把旧 Claim 状态当作
+空白基线。
+
+当前仓库已经具备 direct MCP tools 和状态机，但上述一键批测 runner 尚未实现。
+在 runner 完成前，只能按同样拓扑手工跑单个 pair；不要把手工直接调用
+`submit_claim` 的结果当成完整 direct adapter 验证。实现顺序和验收标准见
+`TODO.md`。
