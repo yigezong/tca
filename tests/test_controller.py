@@ -160,17 +160,29 @@ def test_integration_reassesses_claim_waiting_for_completed_work() -> None:
     assert task.completed_claims == ()
 
 
-def test_resubmitted_claim_requires_new_version() -> None:
+def test_resubmitted_claim_replay_is_idempotent_and_amendment_needs_version() -> None:
     controller = make_controller()
-    controller.submit_claim(make_claim("claim-1", ("src/login/**",)))
+    first = controller.submit_claim(make_claim("claim-1", ("src/login/**",)))
     approve_claim(controller, "claim-1")
 
+    # Identical replay is idempotent: returns the current authoritative record.
+    replayed = controller.submit_claim(
+        make_claim("claim-1", ("src/login/**",), version=1)
+    )
+    assert replayed.state is ClaimState.APPROVED
+    assert replayed.revision == controller.store.get(
+        "team/project", "claim-1"
+    ).revision
+
+    # Changed content without a version bump is still rejected.
     try:
-        controller.submit_claim(make_claim("claim-1", ("src/login/**",), version=1))
+        controller.submit_claim(
+            make_claim("claim-1", ("src/login/**", "src/router/**"), version=1)
+        )
     except ValueError as error:
         assert "version must be greater" in str(error)
     else:
-        raise AssertionError("same claim version should be rejected")
+        raise AssertionError("changed claim without version bump should be rejected")
 
     amended = controller.submit_claim(
         make_claim("claim-1", ("src/login/**", "src/router/**"), version=2)

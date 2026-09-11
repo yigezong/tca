@@ -325,6 +325,12 @@ def build_parser() -> argparse.ArgumentParser:
     complete = subparsers.add_parser("complete", help="A: mark claim completed.")
     complete.add_argument("claim_id")
 
+    progress = subparsers.add_parser(
+        "progress", help="A: report progress/heartbeat while executing."
+    )
+    progress.add_argument("claim_id")
+    progress.add_argument("--note", default="", help="Optional progress note.")
+
     integrate = subparsers.add_parser(
         "integrate",
         help="Fallback: confirm integration when a webhook cannot prove ancestry.",
@@ -471,6 +477,17 @@ async def run(args: argparse.Namespace) -> dict[str, Any] | None:
             token=token,
             name="complete_claim",
             arguments={"project_id": project_id, "claim_id": args.claim_id},
+        )
+    if args.command == "progress":
+        return await call_tool(
+            mcp_url=mcp_url,
+            token=token,
+            name="report_progress",
+            arguments={
+                "project_id": project_id,
+                "claim_id": args.claim_id,
+                "progress": args.note,
+            },
         )
     if args.command == "integrate":
         return await call_tool(

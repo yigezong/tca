@@ -16,6 +16,9 @@ INSTRUCTIONS = """
 TCA coordinates coding-agent work in Git-enabled projects.
 A: after publishing or submitting a Claim, call wait_for_decision before shared code changes.
 A: only start when allowed_actions includes start_execution; call complete_claim when done.
+A: while executing, call report_progress to keep the claim alive and show progress;
+   C auto-completes claims whose execution deadline elapses without complete_claim,
+   and auto-resolves M decisions that stay pending too long.
 M: use wait_for_coordination_task, then submit_coordination_decision. completed_claims are
 pending integration; overlapping work must incorporate their work branches
 or require a human decision.
@@ -90,6 +93,13 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
     def complete_claim(project_id: str, claim_id: str) -> dict[str, object]:
         """For A: mark a pushed work branch completed and trigger reevaluation."""
         return controller.complete_claim(project_id, claim_id).to_mapping()
+
+    @mcp.tool()
+    def report_progress(
+        project_id: str, claim_id: str, progress: str = ""
+    ) -> dict[str, object]:
+        """For A: report progress/heartbeat while executing; extends the execution deadline."""
+        return controller.report_progress(project_id, claim_id, progress).to_mapping()
 
     @mcp.tool()
     def integrate_claim(project_id: str, claim_id: str) -> dict[str, object]:

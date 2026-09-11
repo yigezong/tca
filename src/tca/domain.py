@@ -116,6 +116,9 @@ class ClaimRecord:
     revision: int
     decision: Decision | None = None
     updated_at: str = field(default="")
+    executing_since: str = field(default="")
+    last_heartbeat: str = field(default="")
+    progress: str = field(default="")
 
     def to_mapping(self) -> dict[str, Any]:
         return {
@@ -124,6 +127,9 @@ class ClaimRecord:
             "revision": self.revision,
             "decision": self.decision.to_mapping() if self.decision else None,
             "updated_at": self.updated_at,
+            "executing_since": self.executing_since,
+            "last_heartbeat": self.last_heartbeat,
+            "progress": self.progress,
         }
 
 

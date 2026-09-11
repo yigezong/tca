@@ -47,6 +47,7 @@ class ClaimStore:
             self._create_claims_table()
             return
         if self._primary_key_columns("claims") == ("project_id", "claim_id"):
+            self._ensure_claim_columns()
             return
         self._connection.execute("ALTER TABLE claims RENAME TO claims_old")
         self._create_claims_table()
@@ -59,6 +60,17 @@ class ClaimStore:
             FROM claims_old"""
         )
         self._connection.execute("DROP TABLE claims_old")
+
+    def _ensure_claim_columns(self) -> None:
+        existing = {
+            str(row["name"])
+            for row in self._connection.execute("PRAGMA table_info(claims)")
+        }
+        for name in ("executing_since", "last_heartbeat", "progress"):
+            if name not in existing:
+                self._connection.execute(
+                    f"ALTER TABLE claims ADD COLUMN {name} TEXT"
+                )
 
     def _ensure_coordination_tasks_table(self) -> None:
         if not self._table_exists("coordination_tasks"):
@@ -107,6 +119,9 @@ class ClaimStore:
                 payload TEXT NOT NULL,
                 decision TEXT,
                 updated_at TEXT NOT NULL,
+                executing_since TEXT,
+                last_heartbeat TEXT,
+                progress TEXT,
                 PRIMARY KEY (project_id, claim_id)
             )"""
         )
@@ -261,9 +276,11 @@ class ClaimStore:
             rows = self._connection.execute(query, parameters).fetchall()
         return [self._decode(row) for row in rows]
 
-    def queue_coordination(self, project_id: str, claim_id: str) -> None:
+    def queue_coordination(
+        self, project_id: str, claim_id: str, now: str | None = None
+    ) -> None:
         record = self.get(project_id, claim_id)
-        now = _now()
+        now = now or _now()
         with self._lock, self._connection:
             self._connection.execute(
                 """INSERT INTO coordination_tasks
@@ -310,6 +327,53 @@ class ClaimStore:
                     f"claim {project_id}:{claim_id} has no pending coordination task"
                 )
 
+    def record_execution_start(
+        self, project_id: str, claim_id: str, ts: str
+    ) -> None:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE claims SET executing_since = ?, last_heartbeat = NULL,
+                updated_at = ?
+                WHERE project_id = ? AND claim_id = ?""",
+                (ts, _now(), project_id, claim_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(f"{project_id}:{claim_id}")
+
+    def update_progress(
+        self, project_id: str, claim_id: str, progress: str, ts: str
+    ) -> None:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE claims SET last_heartbeat = ?, progress = ?, updated_at = ?
+                WHERE project_id = ? AND claim_id = ?""",
+                (ts, progress, _now(), project_id, claim_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(f"{project_id}:{claim_id}")
+
+    def coordination_created_at(
+        self, project_id: str, claim_id: str
+    ) -> str | None:
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT created_at FROM coordination_tasks
+                WHERE project_id = ? AND claim_id = ? AND status = 'pending'""",
+                (project_id, claim_id),
+            ).fetchone()
+        return str(row["created_at"]) if row else None
+
+    def list_active_all(self) -> list[ClaimRecord]:
+        values = tuple(state.value for state in ACTIVE_STATES)
+        placeholders = ",".join("?" for _ in values)
+        with self._lock:
+            rows = self._connection.execute(
+                f"SELECT * FROM claims WHERE state IN ({placeholders}) "
+                "ORDER BY updated_at",
+                values,
+            ).fetchall()
+        return [self._decode(row) for row in rows]
+
     @staticmethod
     def _decode(row: sqlite3.Row) -> ClaimRecord:
         decision = json.loads(row["decision"]) if row["decision"] else None
@@ -319,6 +383,9 @@ class ClaimStore:
             revision=row["revision"],
             decision=Decision.from_mapping(decision) if decision else None,
             updated_at=row["updated_at"],
+            executing_since=row["executing_since"] or "",
+            last_heartbeat=row["last_heartbeat"] or "",
+            progress=row["progress"] or "",
         )
 
 

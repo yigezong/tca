@@ -75,3 +75,24 @@ TCA_AGENT_ID=agent-a1
 M 使用保留身份 `TCA_AGENT_ID=agent-m`，也不复用 A 的工作区。M 使用同一个团队 token 连接 MCP；做语义判断时应自己 clone 一份被测 repo，并直接以该 repo 根目录作为 M task 的工作目录。`project_id` 和 MCP URL 从 `.tca/project.yaml` 读取。M 持续调用 `wait_for_coordination_task(project_id)`；只有 Claim 元数据时，它只能做路径级和依赖级判断。
 
 真实用户不需要 checkout TCA Server 源码仓库。如果当前 Agent 客户端没有暴露 TCA MCP tools，说明客户端 MCP 还没有配置好；Agent 必须停止共享代码修改并向人报告。
+
+## 确定性超时（C 自动兜底）
+
+Claim 状态转换不只是事件驱动，还带时间维度。C 没有任何后台进程，而是在每次
+状态查询或工具调用时惰性检查并自动推进过期状态；所有结果都由 C 决定，A/M
+不得自行推断。
+
+- A 获批并 `start_execution` 后，C 记录 `executing_since`。若在
+  `TCA_EXECUTION_TIMEOUT_SECONDS`（默认 3600s）内没有 `complete_claim`，C
+  自动把 Claim 置为 `completed` 并重新评估等待方，避免后续 Agent 无限等待。
+- A 在 `executing` 期间应调用 `report_progress(project_id, claim_id, progress)`
+  上报心跳；最近一次心跳在 `TCA_HEARTBEAT_TIMEOUT_SECONDS`（默认 900s）内，
+  执行超时窗口会相应顺延。没有心跳则按首次 `executing_since` 计算。
+- M 领取协调任务后，若在 `TCA_M_DECISION_TIMEOUT_SECONDS`（默认 600s）内没有
+  `submit_coordination_decision`，C 用确定性规则兜底：路径无冲突且无未完成依赖
+  则自动 `approved`，否则按规则置为 `waiting` 并带约束。M 是可选的语义增强，
+  不在关键路径上。
+- 所有状态转换幂等：重复 `start_execution`、`complete_claim` 或重放
+  `submit_claim` 都返回当前权威状态，不报错。A 崩溃重启后可以安全重放。
+- 超时参数是 Server 级环境变量，所有项目共享；超时兜底的结果会写入
+  Decision 的 `reason`，A/M 通过 `get_claim_state` 查看。

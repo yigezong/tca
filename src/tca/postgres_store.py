@@ -43,6 +43,9 @@ class PostgresClaimStore:
                 payload TEXT NOT NULL,
                 decision TEXT,
                 updated_at TEXT NOT NULL,
+                executing_since TEXT,
+                last_heartbeat TEXT,
+                progress TEXT,
                 PRIMARY KEY (project_id, claim_id)
             )""",
             """CREATE TABLE IF NOT EXISTS coordination_tasks (
@@ -64,6 +67,16 @@ class PostgresClaimStore:
             with connection.cursor() as cursor:
                 for statement in statements:
                     cursor.execute(statement)
+                for column in (
+                    "executing_since",
+                    "last_heartbeat",
+                    "progress",
+                ):
+                    cursor.execute(
+                        sql.SQL(
+                            "ALTER TABLE claims ADD COLUMN IF NOT EXISTS {} TEXT"
+                        ).format(sql.Identifier(column))
+                    )
                 self._ensure_primary_key(cursor, "claims")
                 self._ensure_primary_key(cursor, "coordination_tasks")
 
@@ -233,9 +246,11 @@ class PostgresClaimStore:
             rows = connection.execute(query, parameters).fetchall()
         return [self._decode(row) for row in rows]
 
-    def queue_coordination(self, project_id: str, claim_id: str) -> None:
+    def queue_coordination(
+        self, project_id: str, claim_id: str, now: str | None = None
+    ) -> None:
         record = self.get(project_id, claim_id)
-        now = _now()
+        now = now or _now()
         with self._connect() as connection:
             connection.execute(
                 """INSERT INTO coordination_tasks
@@ -282,6 +297,54 @@ class PostgresClaimStore:
                     f"claim {project_id}:{claim_id} has no pending coordination task"
                 )
 
+    def record_execution_start(
+        self, project_id: str, claim_id: str, ts: str
+    ) -> None:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """UPDATE claims SET executing_since = %s, last_heartbeat = NULL,
+                updated_at = %s
+                WHERE project_id = %s AND claim_id = %s""",
+                (ts, _now(), project_id, claim_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(f"{project_id}:{claim_id}")
+
+    def update_progress(
+        self, project_id: str, claim_id: str, progress: str, ts: str
+    ) -> None:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """UPDATE claims SET last_heartbeat = %s, progress = %s,
+                updated_at = %s
+                WHERE project_id = %s AND claim_id = %s""",
+                (ts, progress, _now(), project_id, claim_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(f"{project_id}:{claim_id}")
+
+    def coordination_created_at(
+        self, project_id: str, claim_id: str
+    ) -> str | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT created_at FROM coordination_tasks
+                WHERE project_id = %s AND claim_id = %s AND status = 'pending'""",
+                (project_id, claim_id),
+            ).fetchone()
+        return str(row["created_at"]) if row else None
+
+    def list_active_all(self) -> list[ClaimRecord]:
+        values = tuple(state.value for state in ACTIVE_STATES)
+        placeholders = ",".join("%s" for _ in values)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM claims WHERE state IN ({placeholders}) "
+                "ORDER BY updated_at",
+                values,
+            ).fetchall()
+        return [self._decode(row) for row in rows]
+
     @staticmethod
     def _decode(row: dict[str, Any]) -> ClaimRecord:
         decision = json.loads(row["decision"]) if row["decision"] else None
@@ -291,4 +354,7 @@ class PostgresClaimStore:
             revision=row["revision"],
             decision=Decision.from_mapping(decision) if decision else None,
             updated_at=row["updated_at"],
+            executing_since=row.get("executing_since") or "",
+            last_heartbeat=row.get("last_heartbeat") or "",
+            progress=row.get("progress") or "",
         )
