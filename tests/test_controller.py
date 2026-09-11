@@ -80,11 +80,12 @@ def test_leased_coordination_task_only_accepts_its_worker_decision() -> None:
 
 def test_privileged_review_resolves_needs_human_with_calibrated_uncertainty() -> None:
     controller = make_controller()
-    controller.submit_claim(make_claim("claim-1", ("src/login/**",)))
-    controller.submit_coordination_decision(
+    claim = controller.submit_claim(make_claim("claim-1", ("src/login/**",)))
+    controller.request_requirements_alignment(
         "team/project",
-        "claim-1",
-        Decision(ClaimState.NEEDS_HUMAN, "shared default behavior is ambiguous"),
+        claim.claim.claim_id,
+        claim.claim.author,
+        "the public default is ambiguous",
     )
 
     resolved = controller.resolve_privileged_review(
@@ -102,6 +103,36 @@ def test_privileged_review_resolves_needs_human_with_calibrated_uncertainty() ->
     assert resolved.decision is not None
     assert "no strong preference" in resolved.decision.reason
     assert resolved.decision.uncertainty == 0.8
+
+
+def test_m_cannot_escalate_to_needs_human_but_owner_can_request_alignment() -> None:
+    controller = make_controller()
+    claim = controller.submit_claim(make_claim("claim-1", ("src/login/**",)))
+
+    with pytest.raises(ValueError, match="M cannot move"):
+        controller.submit_coordination_decision(
+            claim.claim.project_id,
+            claim.claim.claim_id,
+            Decision(ClaimState.NEEDS_HUMAN, "M cannot own requirement alignment"),
+        )
+
+    with pytest.raises(ValueError, match="only the Claim author"):
+        controller.request_requirements_alignment(
+            claim.claim.project_id,
+            claim.claim.claim_id,
+            "agent-other",
+            "consumer contract is underspecified",
+        )
+
+    aligned = controller.request_requirements_alignment(
+        claim.claim.project_id,
+        claim.claim.claim_id,
+        claim.claim.author,
+        "consumer contract is underspecified",
+    )
+    assert aligned.state is ClaimState.NEEDS_HUMAN
+    assert aligned.decision is not None
+    assert aligned.decision.reason.startswith("A requested requirements alignment:")
 
 
 def test_privileged_review_only_resolves_needs_human() -> None:

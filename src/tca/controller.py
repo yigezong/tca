@@ -369,30 +369,10 @@ class Controller:
         worker_id: str | None = None,
     ) -> ClaimRecord:
         self.run_deadline_checks(project_id)
-        if decision.state is ClaimState.NEEDS_HUMAN and not self.allow_needs_human:
-            record = self.store.get(project_id, claim_id)
-            active = self.store.list_active(project_id, exclude=claim_id)
-            hard = self.rule_checker.check(record.claim, active)
-            if hard is None:
-                decision = Decision(
-                    state=(
-                        ClaimState.APPROVED_WITH_CONSTRAINTS
-                        if decision.constraints
-                        else ClaimState.APPROVED
-                    ),
-                    reason=(
-                        "needs_human is disabled on this server; C resolved "
-                        "the claim deterministically"
-                    ),
-                    constraints=decision.constraints,
-                )
-            else:
-                decision = hard
         allowed_states = {
             ClaimState.APPROVED,
             ClaimState.APPROVED_WITH_CONSTRAINTS,
             ClaimState.WAITING,
-            ClaimState.NEEDS_HUMAN,
             ClaimState.BLOCKED,
         }
         if decision.state not in allowed_states:
@@ -411,10 +391,43 @@ class Controller:
         self.store.complete_coordination(project_id, claim_id, worker_id=worker_id)
         return record
 
+    def request_requirements_alignment(
+        self, project_id: str, claim_id: str, requester: str, reason: str
+    ) -> ClaimRecord:
+        """Let the owning A pause before coding when requirements are ambiguous."""
+        self.run_deadline_checks(project_id)
+        record = self.store.get(project_id, claim_id)
+        if requester != record.claim.author:
+            raise ValueError("only the Claim author may request requirements alignment")
+        requestable = {
+            ClaimState.ASSESSING,
+            ClaimState.WAITING,
+            ClaimState.APPROVED,
+            ClaimState.APPROVED_WITH_CONSTRAINTS,
+        }
+        if record.state not in requestable:
+            raise ValueError(
+                f"Claim {claim_id} cannot request requirements alignment from {record.state.value}"
+            )
+        decision = Decision(
+            state=ClaimState.NEEDS_HUMAN,
+            reason=f"A requested requirements alignment: {reason}",
+        )
+        transitioned = self.store.transition(
+            project_id,
+            claim_id,
+            {record.state},
+            ClaimState.NEEDS_HUMAN,
+            decision=decision,
+        )
+        if record.state is ClaimState.ASSESSING:
+            self.store.complete_coordination(project_id, claim_id)
+        return transitioned
+
     def resolve_privileged_review(
         self, project_id: str, claim_id: str, decision: Decision
     ) -> ClaimRecord:
-        """Apply P's bounded resolution after C or M escalated to needs_human.
+        """Apply a bounded requirements-alignment resolution after A escalation.
 
         P's private patch context never enters the store.  Only the resulting
         constraints, requirements and calibrated uncertainty are persisted for
@@ -440,6 +453,10 @@ class Controller:
                 wait_for=decision.wait_for,
                 conflicts_with=decision.conflicts_with,
                 uncertainty=decision.uncertainty,
+                alignment_owner=decision.alignment_owner,
+                alignment_compatibility=decision.alignment_compatibility,
+                alignment_acceptance=decision.alignment_acceptance,
+                alignment_split=decision.alignment_split,
             )
         return self.store.transition(
             project_id,

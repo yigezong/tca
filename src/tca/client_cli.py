@@ -330,6 +330,18 @@ def build_parser() -> argparse.ArgumentParser:
     resolve.add_argument("--wait-for", action="append", default=[])
     resolve.add_argument("--conflicts-with", action="append", default=[])
     resolve.add_argument("--uncertainty", type=float, required=True)
+    resolve.add_argument("--alignment-owner", default="")
+    resolve.add_argument("--compatibility", action="append", default=[])
+    resolve.add_argument("--acceptance", action="append", default=[])
+    resolve.add_argument("--split", action="append", default=[])
+
+    alignment = subparsers.add_parser(
+        "request-alignment",
+        help="A: request requirements alignment before modifying shared code.",
+    )
+    alignment.add_argument("claim_id")
+    alignment.add_argument("--reason", required=True)
+    alignment.add_argument("--requester", default=os.getenv("TCA_AGENT_ID", ""))
 
     state = subparsers.add_parser("state", help="A/M: get claim state.")
     state.add_argument("claim_id")
@@ -482,6 +494,24 @@ async def run(args: argparse.Namespace) -> dict[str, Any] | None:
                 "wait_for": args.wait_for,
                 "conflicts_with": args.conflicts_with,
                 "uncertainty": args.uncertainty,
+                "alignment_owner": args.alignment_owner,
+                "alignment_compatibility": args.compatibility,
+                "alignment_acceptance": args.acceptance,
+                "alignment_split": args.split,
+            },
+        )
+    if args.command == "request-alignment":
+        if not args.requester:
+            raise TcaClientError("request-alignment requires --requester or TCA_AGENT_ID")
+        return await call_tool(
+            mcp_url=mcp_url,
+            token=token,
+            name="request_requirements_alignment",
+            arguments={
+                "project_id": project_id,
+                "claim_id": args.claim_id,
+                "requester": args.requester,
+                "reason": args.reason,
             },
         )
     if args.command == "state":

@@ -171,22 +171,17 @@ async def test_mcp_exposes_report_progress_tool() -> None:
     assert "report_progress" in {tool.name for tool in tools}
 
 
-def test_needs_human_disabled_maps_m_submission_to_approved() -> None:
+def test_m_cannot_submit_needs_human_even_when_alignment_is_disabled() -> None:
     controller = make_controller(allow_needs_human=False)
     record = controller.submit_claim(make_claim("claim-1", ("src/api/**",)))
     assert record.state is ClaimState.ASSESSING
 
-    # M says "can't decide, needs human" — but the server has needs_human
-    # disabled, so C resolves the claim deterministically.
-    controller.submit_coordination_decision(
-        "team/project",
-        "claim-1",
-        Decision(ClaimState.NEEDS_HUMAN, "M cannot decide reliably"),
-    )
-
-    state = controller.get_claim_state("team/project", "claim-1")
-    assert state["state"] == "approved"
-    assert "needs_human is disabled" in state["decision"]["reason"]
+    with pytest.raises(ValueError, match="M cannot move"):
+        controller.submit_coordination_decision(
+            "team/project",
+            "claim-1",
+            Decision(ClaimState.NEEDS_HUMAN, "M cannot decide reliably"),
+        )
 
 
 def test_needs_human_disabled_cycle_breaks_deterministically() -> None:
@@ -209,15 +204,16 @@ def test_needs_human_disabled_cycle_breaks_deterministically() -> None:
     assert "declared planned_paths" in state["decision"]["constraints"][0]
 
 
-def test_needs_human_enabled_keeps_human_escalation() -> None:
+def test_claim_author_requests_requirements_alignment() -> None:
     controller = make_controller()
     record = controller.submit_claim(make_claim("claim-1", ("src/api/**",)))
     assert record.state is ClaimState.ASSESSING
 
-    controller.submit_coordination_decision(
+    controller.request_requirements_alignment(
         "team/project",
         "claim-1",
-        Decision(ClaimState.NEEDS_HUMAN, "M cannot decide reliably"),
+        record.claim.author,
+        "the acceptance criterion is ambiguous",
     )
 
     state = controller.get_claim_state("team/project", "claim-1")

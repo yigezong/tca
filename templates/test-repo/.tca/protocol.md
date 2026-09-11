@@ -5,7 +5,7 @@
 - **A（开发 Agent）**：提出 Claim、获批后执行代码修改，并在完成时通知 C。
 - **M（协调 Agent）**：从 C 获取待协调任务，理解语义冲突并提交建议。
 - **C（协议控制器）**：运行在 TCA Server 中，维护状态机、校验操作并保存 Claim 状态和协调队列。
-- **P（特权规划 Agent）**：只在 `needs_human` 时读取自己独占的完整 `combined.patch`，把最小化需求和不确定度交回 C；真正的人只处理 P 仍无法裁决的高风险问题。
+- **P（需求对齐复核 Agent）**：只在 A 请求 `needs_human` 时读取自己独占的完整上下文，把最小需求对齐包和不确定度交回 C；真正的人只处理 P 仍无法裁决的高风险问题。
 
 A 和 M 都是 TCA Server 之外的客户端，都通过 MCP 与 C 交互。
 
@@ -23,7 +23,7 @@ A 和 M 都是 TCA Server 之外的客户端，都通过 MCP 与 C 交互。
 
 Claim 除 `planned_paths` 外还可声明 `owned_symbols`（自己负责的公共符号）和
 `behavior_contracts`（不得破坏的默认行为）。A 只能修改声明的路径和符号；若需要
-改变公共 API、默认参数或行为契约，必须停止并让 M/P 裁决。
+若现有 Claim 无法推出接口 owner、兼容性、验收标准或可并行拆分，A 必须停止共享范围修改，调用 `request_requirements_alignment`；不得自行猜测公共 API、默认参数或行为契约。
 
 A 可在自己 worktree 的 `.tca/scratch-tests/` 写临时测试，用来验证不确定的函数、
 边界输入和兼容行为。它们不得读取官方/隐藏测试、不得读取其它 A 的 patch，且不得
@@ -34,17 +34,20 @@ A 可在自己 worktree 的 `.tca/scratch-tests/` 写临时测试，用来验证
 ## M 的最短流程
 
 1. 常驻调用 `wait_for_coordination_task(project_id)` 等待待协调 Claim；单次检查可把 `timeout_seconds` 设为 `0`。
-2. 判断语义冲突、依赖、约束及是否需要人类。`active_claims` 是尚未完成的工作，`completed_claims` 是待集成工作；与后者重叠时要求后续 A 纳入其 `work_branch`，或返回 `needs_human`。
+2. 判断语义冲突、依赖与约束。`active_claims` 是尚未完成的工作，`completed_claims` 是待集成工作；与后者重叠时要求后续 A 纳入其 `work_branch`。M 只能给出 `approved`、`approved_with_constraints`、`waiting` 或 `blocked`，不得提交 `needs_human`。
 3. 调用 `submit_coordination_decision(project_id, claim_id, ...)` 提交建议。
 4. C 校验建议；M 不能直接把 Claim 变为 `executing` 或 `completed`。
 
 ## P 的特权复核
 
-当 M 或 C 产生 `needs_human` 时，P 在独立的本地 worktree 中读取一次
+当 Claim author A 发现需求、接口或验收标准无法从既有契约推出时，调用
+`request_requirements_alignment(project_id, claim_id, requester, reason)`。C 将 Claim
+置为 `needs_human`。此时 P 在独立的本地 worktree 中读取一次
 `.tca/private/combined.patch`。该文件只能由 harness 写入 P worktree，A/M worktree
 绝不复制该文件。P 不把 patch 内容传回 MCP，只调用
 `resolve_privileged_review(project_id, claim_id, ...)` 交回：目标状态、给当前 A 的
-最小化 `constraints`、理由与 `uncertainty`（0 到 1）。
+最小化 `constraints`、理由与 `uncertainty`（0 到 1），以及需求对齐包：
+`alignment_owner`、`alignment_compatibility`、`alignment_acceptance`、`alignment_split`。
 
 若 `uncertainty >= 0.7`，P 必须保守地表达“没有强偏好；任何保持已声明行为契约的
 实现均可”，而不能伪造确定结论。涉及破坏性公共 API 时仍应保留 `needs_human` 给真实人。
@@ -117,7 +120,5 @@ Claim 状态转换不只是事件驱动，还带时间维度。C 没有任何后
   `submit_claim` 都返回当前权威状态，不报错。A 崩溃重启后可以安全重放。
 - 超时参数是 Server 级环境变量，所有项目共享；超时兜底的结果会写入
   Decision 的 `reason`，A/M 通过 `get_claim_state` 查看。
-- 批量无人值守时可设 `TCA_DISABLE_NEEDS_HUMAN=1` 临时禁用 `needs_human`：
-  M 提交 `needs_human` 会被 C 替换为确定性结果（无冲突自动 `approved`，
-  有冲突按规则 `waiting`）；M 超时且检测到 wait 环时，C 改用
-  `approved_with_constraints` 确定性破环，不会卡死等人。默认保持开启。
+- 批量无人值守时，A 不应请求需求对齐；若无法安全推导已有契约，应结束 Claim 并
+  标明对齐缺口。`needs_human` 是需求对齐状态，不是 M 的冲突决策。

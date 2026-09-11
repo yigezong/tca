@@ -19,8 +19,9 @@ A: only start when allowed_actions includes start_execution; call complete_claim
 A: while executing, call report_progress to keep the claim alive and show progress;
    C auto-completes claims whose execution deadline elapses without complete_claim,
    and auto-resolves M decisions that stay pending too long.
-M: use wait_for_coordination_task, then submit_coordination_decision. P resolves
-needs_human only after reviewing its private, local combined-patch context. completed_claims are
+M: use wait_for_coordination_task, then submit_coordination_decision. An owning A,
+not M, requests requirements alignment when its declared contracts are insufficient.
+The alignment reviewer resolves that request from its private, local context. completed_claims are
 pending integration; overlapping work must incorporate their work branches
 or require a human decision.
 GitHub default-branch pushes automatically confirm integration. integrate_claim is only
@@ -153,6 +154,15 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
         ).to_mapping()
 
     @mcp.tool()
+    def request_requirements_alignment(
+        project_id: str, claim_id: str, requester: str, reason: str
+    ) -> dict[str, object]:
+        """For an owning A: request requirement, interface, or acceptance alignment."""
+        return controller.request_requirements_alignment(
+            project_id, claim_id, requester, reason
+        ).to_mapping()
+
+    @mcp.tool()
     def resolve_privileged_review(
         project_id: str,
         claim_id: str,
@@ -162,8 +172,12 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
         wait_for: list[str] | None = None,
         conflicts_with: list[str] | None = None,
         uncertainty: float | None = None,
+        alignment_owner: str = "",
+        alignment_compatibility: list[str] | None = None,
+        alignment_acceptance: list[str] | None = None,
+        alignment_split: list[str] | None = None,
     ) -> dict[str, object]:
-        """For P only: resolve a needs_human Claim from private patch context.
+        """Resolve an A-owned requirements-alignment request from private context.
 
         Do not send combined.patch through MCP. P keeps that context in its
         isolated worktree and submits only minimal requirements for the owning A.
@@ -177,6 +191,10 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
                 "wait_for": wait_for or [],
                 "conflicts_with": conflicts_with or [],
                 "uncertainty": uncertainty,
+                "alignment_owner": alignment_owner,
+                "alignment_compatibility": alignment_compatibility or [],
+                "alignment_acceptance": alignment_acceptance or [],
+                "alignment_split": alignment_split or [],
             }
         )
         return controller.resolve_privileged_review(

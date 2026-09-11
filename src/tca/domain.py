@@ -100,6 +100,10 @@ class Decision:
     wait_for: tuple[str, ...] = ()
     conflicts_with: tuple[str, ...] = ()
     uncertainty: float | None = None
+    alignment_owner: str = ""
+    alignment_compatibility: tuple[str, ...] = ()
+    alignment_acceptance: tuple[str, ...] = ()
+    alignment_split: tuple[str, ...] = ()
 
     def to_mapping(self) -> dict[str, Any]:
         return {
@@ -109,6 +113,10 @@ class Decision:
             "wait_for": list(self.wait_for),
             "conflicts_with": list(self.conflicts_with),
             "uncertainty": self.uncertainty,
+            "alignment_owner": self.alignment_owner,
+            "alignment_compatibility": list(self.alignment_compatibility),
+            "alignment_acceptance": list(self.alignment_acceptance),
+            "alignment_split": list(self.alignment_split),
         }
 
     @classmethod
@@ -127,6 +135,16 @@ class Decision:
             wait_for=tuple(value.get("wait_for", ())),
             conflicts_with=tuple(value.get("conflicts_with", ())),
             uncertainty=uncertainty,
+            alignment_owner=str(value.get("alignment_owner", "")),
+            alignment_compatibility=tuple(
+                str(item) for item in value.get("alignment_compatibility", ())
+            ),
+            alignment_acceptance=tuple(
+                str(item) for item in value.get("alignment_acceptance", ())
+            ),
+            alignment_split=tuple(
+                str(item) for item in value.get("alignment_split", ())
+            ),
         )
 
 
