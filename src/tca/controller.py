@@ -411,6 +411,44 @@ class Controller:
         self.store.complete_coordination(project_id, claim_id, worker_id=worker_id)
         return record
 
+    def resolve_privileged_review(
+        self, project_id: str, claim_id: str, decision: Decision
+    ) -> ClaimRecord:
+        """Apply P's bounded resolution after C or M escalated to needs_human.
+
+        P's private patch context never enters the store.  Only the resulting
+        constraints, requirements and calibrated uncertainty are persisted for
+        the owning A to follow.
+        """
+        allowed_states = {
+            ClaimState.APPROVED,
+            ClaimState.APPROVED_WITH_CONSTRAINTS,
+            ClaimState.WAITING,
+            ClaimState.BLOCKED,
+        }
+        if decision.state not in allowed_states:
+            raise ValueError(f"P cannot move a Claim to {decision.state.value}")
+        if decision.uncertainty is not None and decision.uncertainty >= 0.7:
+            decision = Decision(
+                state=decision.state,
+                reason=(
+                    f"{decision.reason} P uncertainty={decision.uncertainty:.2f}; "
+                    "no strong preference: any implementation preserving the "
+                    "declared behavior contracts is acceptable."
+                ),
+                constraints=decision.constraints,
+                wait_for=decision.wait_for,
+                conflicts_with=decision.conflicts_with,
+                uncertainty=decision.uncertainty,
+            )
+        return self.store.transition(
+            project_id,
+            claim_id,
+            {ClaimState.NEEDS_HUMAN},
+            decision.state,
+            decision=decision,
+        )
+
     def _assess_or_queue(
         self, claim: Claim, active: list[ClaimRecord]
     ) -> ClaimRecord:

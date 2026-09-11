@@ -315,6 +315,22 @@ def build_parser() -> argparse.ArgumentParser:
     approve.add_argument("--conflicts-with", action="append", default=[])
     approve.add_argument("--worker-id", default=os.getenv("TCA_AGENT_ID", "agent-m"))
 
+    resolve = subparsers.add_parser(
+        "resolve",
+        help="P: resolve a needs_human Claim from private local context.",
+    )
+    resolve.add_argument("claim_id")
+    resolve.add_argument(
+        "--state",
+        default="approved_with_constraints",
+        choices=["approved", "approved_with_constraints", "waiting", "blocked"],
+    )
+    resolve.add_argument("--reason", required=True)
+    resolve.add_argument("--constraint", action="append", default=[])
+    resolve.add_argument("--wait-for", action="append", default=[])
+    resolve.add_argument("--conflicts-with", action="append", default=[])
+    resolve.add_argument("--uncertainty", type=float, required=True)
+
     state = subparsers.add_parser("state", help="A/M: get claim state.")
     state.add_argument("claim_id")
 
@@ -450,6 +466,22 @@ async def run(args: argparse.Namespace) -> dict[str, Any] | None:
                 "wait_for": args.wait_for,
                 "conflicts_with": args.conflicts_with,
                 "worker_id": args.worker_id,
+            },
+        )
+    if args.command == "resolve":
+        return await call_tool(
+            mcp_url=mcp_url,
+            token=token,
+            name="resolve_privileged_review",
+            arguments={
+                "project_id": project_id,
+                "claim_id": args.claim_id,
+                "state": args.state,
+                "reason": args.reason,
+                "constraints": args.constraint,
+                "wait_for": args.wait_for,
+                "conflicts_with": args.conflicts_with,
+                "uncertainty": args.uncertainty,
             },
         )
     if args.command == "state":

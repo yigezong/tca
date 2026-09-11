@@ -19,7 +19,8 @@ A: only start when allowed_actions includes start_execution; call complete_claim
 A: while executing, call report_progress to keep the claim alive and show progress;
    C auto-completes claims whose execution deadline elapses without complete_claim,
    and auto-resolves M decisions that stay pending too long.
-M: use wait_for_coordination_task, then submit_coordination_decision. completed_claims are
+M: use wait_for_coordination_task, then submit_coordination_decision. P resolves
+needs_human only after reviewing its private, local combined-patch context. completed_claims are
 pending integration; overlapping work must incorporate their work branches
 or require a human decision.
 GitHub default-branch pushes automatically confirm integration. integrate_claim is only
@@ -133,6 +134,7 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
         constraints: list[str] | None = None,
         wait_for: list[str] | None = None,
         conflicts_with: list[str] | None = None,
+        uncertainty: float | None = None,
         worker_id: str | None = None,
     ) -> dict[str, object]:
         """For M: submit a recommendation; C validates and applies it."""
@@ -143,10 +145,42 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
                 "constraints": constraints or [],
                 "wait_for": wait_for or [],
                 "conflicts_with": conflicts_with or [],
+                "uncertainty": uncertainty,
             }
         )
         return controller.submit_coordination_decision(
             project_id, claim_id, decision, worker_id=worker_id
+        ).to_mapping()
+
+    @mcp.tool()
+    def resolve_privileged_review(
+        project_id: str,
+        claim_id: str,
+        state: str,
+        reason: str,
+        constraints: list[str] | None = None,
+        wait_for: list[str] | None = None,
+        conflicts_with: list[str] | None = None,
+        uncertainty: float | None = None,
+    ) -> dict[str, object]:
+        """For P only: resolve a needs_human Claim from private patch context.
+
+        Do not send combined.patch through MCP. P keeps that context in its
+        isolated worktree and submits only minimal requirements for the owning A.
+        uncertainty is 0 (certain) through 1 (no reliable preference).
+        """
+        decision = Decision.from_mapping(
+            {
+                "state": state,
+                "reason": reason,
+                "constraints": constraints or [],
+                "wait_for": wait_for or [],
+                "conflicts_with": conflicts_with or [],
+                "uncertainty": uncertainty,
+            }
+        )
+        return controller.resolve_privileged_review(
+            project_id, claim_id, decision
         ).to_mapping()
 
     return mcp

@@ -42,6 +42,9 @@ class Claim:
     planned_paths: tuple[str, ...]
     excluded_paths: tuple[str, ...] = ()
     dependencies: tuple[str, ...] = ()
+    owned_symbols: tuple[str, ...] = ()
+    behavior_contracts: tuple[str, ...] = ()
+    temporary_checks: tuple[str, ...] = ()
     version: int = 1
 
     @classmethod
@@ -71,12 +74,20 @@ class Claim:
             planned_paths=tuple(str(path) for path in value["planned_paths"]),
             excluded_paths=tuple(str(path) for path in value.get("excluded_paths", ())),
             dependencies=tuple(str(item) for item in value.get("dependencies", ())),
+            owned_symbols=tuple(str(item) for item in value.get("owned_symbols", ())),
+            behavior_contracts=tuple(
+                str(item) for item in value.get("behavior_contracts", ())
+            ),
+            temporary_checks=tuple(str(item) for item in value.get("temporary_checks", ())),
             version=version,
         )
 
     def to_mapping(self) -> dict[str, Any]:
         result = asdict(self)
-        for key in ("planned_paths", "excluded_paths", "dependencies"):
+        for key in (
+            "planned_paths", "excluded_paths", "dependencies", "owned_symbols",
+            "behavior_contracts", "temporary_checks",
+        ):
             result[key] = list(result[key])
         return result
 
@@ -88,6 +99,7 @@ class Decision:
     constraints: tuple[str, ...] = ()
     wait_for: tuple[str, ...] = ()
     conflicts_with: tuple[str, ...] = ()
+    uncertainty: float | None = None
 
     def to_mapping(self) -> dict[str, Any]:
         return {
@@ -96,16 +108,25 @@ class Decision:
             "constraints": list(self.constraints),
             "wait_for": list(self.wait_for),
             "conflicts_with": list(self.conflicts_with),
+            "uncertainty": self.uncertainty,
         }
 
     @classmethod
     def from_mapping(cls, value: dict[str, Any]) -> "Decision":
+        uncertainty = (
+            float(value["uncertainty"])
+            if value.get("uncertainty") is not None
+            else None
+        )
+        if uncertainty is not None and not 0.0 <= uncertainty <= 1.0:
+            raise ValueError("uncertainty must be between 0 and 1")
         return cls(
             state=ClaimState(value["state"]),
             reason=str(value["reason"]),
             constraints=tuple(value.get("constraints", ())),
             wait_for=tuple(value.get("wait_for", ())),
             conflicts_with=tuple(value.get("conflicts_with", ())),
+            uncertainty=uncertainty,
         )
 
 

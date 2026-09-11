@@ -97,6 +97,32 @@ async def test_mcp_leases_coordination_task_to_the_requesting_worker() -> None:
 
 
 @pytest.mark.anyio
+async def test_p_can_resolve_needs_human_with_uncertainty() -> None:
+    mcp, controller = make_mcp()
+    claim = controller.submit_claim(make_claim("claim-1"))
+    controller.submit_coordination_decision(
+        claim.claim.project_id,
+        claim.claim.claim_id,
+        Decision(ClaimState.NEEDS_HUMAN, "M needs a privileged review"),
+    )
+
+    _, result = await mcp.call_tool(
+        "resolve_privileged_review",
+        {
+            "project_id": claim.claim.project_id,
+            "claim_id": claim.claim.claim_id,
+            "state": "approved_with_constraints",
+            "reason": "P reviewed the private combined patch",
+            "constraints": ["Preserve the public default behavior."],
+            "uncertainty": 0.8,
+        },
+    )
+
+    assert result["state"] == "approved_with_constraints"
+    assert result["decision"]["uncertainty"] == 0.8
+
+
+@pytest.mark.anyio
 async def test_mcp_claim_tools_are_project_scoped() -> None:
     mcp, controller = make_mcp()
     controller.submit_claim(make_claim("claim-1"))

@@ -5,7 +5,7 @@
 - **A（开发 Agent）**：提出 Claim、获批后执行代码修改，并在完成时通知 C。
 - **M（协调 Agent）**：从 C 获取待协调任务，理解语义冲突并提交建议。
 - **C（协议控制器）**：运行在 TCA Server 中，维护状态机、校验操作并保存 Claim 状态和协调队列。
-- **P（人）**：提出目标；在目标或权限无法自动裁决时作出决定。
+- **P（特权规划 Agent）**：只在 `needs_human` 时读取自己独占的完整 `combined.patch`，把最小化需求和不确定度交回 C；真正的人只处理 P 仍无法裁决的高风险问题。
 
 A 和 M 都是 TCA Server 之外的客户端，都通过 MCP 与 C 交互。
 
@@ -19,6 +19,16 @@ A 和 M 都是 TCA Server 之外的客户端，都通过 MCP 与 C 交互。
 6. 修改完成后提交并 push `work_branch`。
 7. 范围变化时停止越界修改，并通过 Claim 分支提交新版 `.tca/claim.yaml`；完成后调用 `complete_claim(project_id, claim_id)`。
 
+### A 的边界与私有检查
+
+Claim 除 `planned_paths` 外还可声明 `owned_symbols`（自己负责的公共符号）和
+`behavior_contracts`（不得破坏的默认行为）。A 只能修改声明的路径和符号；若需要
+改变公共 API、默认参数或行为契约，必须停止并让 M/P 裁决。
+
+A 可在自己 worktree 的 `.tca/scratch-tests/` 写临时测试，用来验证不确定的函数、
+边界输入和兼容行为。它们不得读取官方/隐藏测试、不得读取其它 A 的 patch，且不得
+提交到业务分支。通过后把简短命令或结果记录到 Claim 的 `temporary_checks`。
+
 `complete_claim` 只表示工作分支已 push、可以集成，不表示已经进入目标分支。A 如果收到与 `state=completed` Claim 重叠的约束，必须先检查并纳入其 `work_branch`；无法安全处理时停止并交给人。
 
 ## M 的最短流程
@@ -27,6 +37,17 @@ A 和 M 都是 TCA Server 之外的客户端，都通过 MCP 与 C 交互。
 2. 判断语义冲突、依赖、约束及是否需要人类。`active_claims` 是尚未完成的工作，`completed_claims` 是待集成工作；与后者重叠时要求后续 A 纳入其 `work_branch`，或返回 `needs_human`。
 3. 调用 `submit_coordination_decision(project_id, claim_id, ...)` 提交建议。
 4. C 校验建议；M 不能直接把 Claim 变为 `executing` 或 `completed`。
+
+## P 的特权复核
+
+当 M 或 C 产生 `needs_human` 时，P 在独立的本地 worktree 中读取一次
+`.tca/private/combined.patch`。该文件只能由 harness 写入 P worktree，A/M worktree
+绝不复制该文件。P 不把 patch 内容传回 MCP，只调用
+`resolve_privileged_review(project_id, claim_id, ...)` 交回：目标状态、给当前 A 的
+最小化 `constraints`、理由与 `uncertainty`（0 到 1）。
+
+若 `uncertainty >= 0.7`，P 必须保守地表达“没有强偏好；任何保持已声明行为契约的
+实现均可”，而不能伪造确定结论。涉及破坏性公共 API 时仍应保留 `needs_human` 给真实人。
 
 ## 集成流程
 

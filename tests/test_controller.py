@@ -78,6 +78,44 @@ def test_leased_coordination_task_only_accepts_its_worker_decision() -> None:
     assert decided.state is ClaimState.APPROVED
 
 
+def test_privileged_review_resolves_needs_human_with_calibrated_uncertainty() -> None:
+    controller = make_controller()
+    controller.submit_claim(make_claim("claim-1", ("src/login/**",)))
+    controller.submit_coordination_decision(
+        "team/project",
+        "claim-1",
+        Decision(ClaimState.NEEDS_HUMAN, "shared default behavior is ambiguous"),
+    )
+
+    resolved = controller.resolve_privileged_review(
+        "team/project",
+        "claim-1",
+        Decision(
+            ClaimState.APPROVED_WITH_CONSTRAINTS,
+            "P found no breaking interaction",
+            constraints=("Preserve Image.save default behavior.",),
+            uncertainty=0.8,
+        ),
+    )
+
+    assert resolved.state is ClaimState.APPROVED_WITH_CONSTRAINTS
+    assert resolved.decision is not None
+    assert "no strong preference" in resolved.decision.reason
+    assert resolved.decision.uncertainty == 0.8
+
+
+def test_privileged_review_only_resolves_needs_human() -> None:
+    controller = make_controller()
+    controller.submit_claim(make_claim("claim-1", ("src/login/**",)))
+
+    with pytest.raises(ValueError):
+        controller.resolve_privileged_review(
+            "team/project",
+            "claim-1",
+            Decision(ClaimState.APPROVED, "P cannot skip the escalation"),
+        )
+
+
 def test_overlapping_claim_is_released_directly_after_completion() -> None:
     controller = make_controller()
     first = controller.submit_claim(make_claim("claim-1", ("src/session/**",)))

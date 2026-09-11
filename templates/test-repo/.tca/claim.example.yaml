@@ -8,4 +8,9 @@ planned_paths:
   - src/example/**
 excluded_paths: []
 dependencies: []
+# A 只能修改 owned_symbols 内的公共符号；行为契约描述不得破坏的默认语义。
+owned_symbols: []
+behavior_contracts: []
+# 仅记录在 A 私有 .tca/scratch-tests/ 中运行过的临时检查；不得提交官方测试。
+temporary_checks: []
 version: 1
