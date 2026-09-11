@@ -26,6 +26,7 @@ class Controller:
         execution_timeout: float = 3600.0,
         heartbeat_timeout: float = 900.0,
         m_decision_timeout: float = 600.0,
+        allow_needs_human: bool = True,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.store = store
@@ -33,6 +34,7 @@ class Controller:
         self.execution_timeout = execution_timeout
         self.heartbeat_timeout = heartbeat_timeout
         self.m_decision_timeout = m_decision_timeout
+        self.allow_needs_human = allow_needs_human
         self._clock = clock or (lambda: datetime.now(UTC))
 
     def _now_epoch(self) -> float:
@@ -123,14 +125,34 @@ class Controller:
                 record.claim.claim_id, decision.wait_for, active
             )
         ):
-            decision = Decision(
-                state=ClaimState.NEEDS_HUMAN,
-                reason=(
-                    "M decision deadline elapsed; deterministic check found a "
-                    f"wait cycle involving {', '.join(decision.wait_for)}; "
-                    "needs a human decision"
-                ),
-            )
+            if not self.allow_needs_human:
+                constraints = tuple(
+                    sorted(
+                        {
+                            item.claim.work_branch
+                            for item in active
+                            if item.claim.claim_id in decision.wait_for
+                        }
+                    )
+                )
+                decision = Decision(
+                    state=ClaimState.APPROVED_WITH_CONSTRAINTS,
+                    reason=(
+                        "M decision deadline elapsed; wait cycle detected but "
+                        "needs_human is disabled on this server, so C breaks the "
+                        f"cycle deterministically (wait_for={', '.join(decision.wait_for)})"
+                    ),
+                    constraints=constraints,
+                )
+            else:
+                decision = Decision(
+                    state=ClaimState.NEEDS_HUMAN,
+                    reason=(
+                        "M decision deadline elapsed; deterministic check found a "
+                        f"wait cycle involving {', '.join(decision.wait_for)}; "
+                        "needs a human decision"
+                    ),
+                )
         self.store.transition(
             record.claim.project_id,
             record.claim.claim_id,
@@ -309,6 +331,25 @@ class Controller:
         self, project_id: str, claim_id: str, decision: Decision
     ) -> ClaimRecord:
         self.run_deadline_checks(project_id)
+        if decision.state is ClaimState.NEEDS_HUMAN and not self.allow_needs_human:
+            record = self.store.get(project_id, claim_id)
+            active = self.store.list_active(project_id, exclude=claim_id)
+            hard = self.rule_checker.check(record.claim, active)
+            if hard is None:
+                decision = Decision(
+                    state=(
+                        ClaimState.APPROVED_WITH_CONSTRAINTS
+                        if decision.constraints
+                        else ClaimState.APPROVED
+                    ),
+                    reason=(
+                        "needs_human is disabled on this server; C resolved "
+                        "the claim deterministically"
+                    ),
+                    constraints=decision.constraints,
+                )
+            else:
+                decision = hard
         allowed_states = {
             ClaimState.APPROVED,
             ClaimState.APPROVED_WITH_CONSTRAINTS,

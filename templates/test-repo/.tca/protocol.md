@@ -96,3 +96,7 @@ Claim 状态转换不只是事件驱动，还带时间维度。C 没有任何后
   `submit_claim` 都返回当前权威状态，不报错。A 崩溃重启后可以安全重放。
 - 超时参数是 Server 级环境变量，所有项目共享；超时兜底的结果会写入
   Decision 的 `reason`，A/M 通过 `get_claim_state` 查看。
+- 批量无人值守时可设 `TCA_DISABLE_NEEDS_HUMAN=1` 临时禁用 `needs_human`：
+  M 提交 `needs_human` 会被 C 替换为确定性结果（无冲突自动 `approved`，
+  有冲突按规则 `waiting`）；M 超时且检测到 wait 环时，C 改用
+  `approved_with_constraints` 确定性破环，不会卡死等人。默认保持开启。

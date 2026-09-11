@@ -169,3 +169,56 @@ async def test_mcp_exposes_report_progress_tool() -> None:
     tools = await mcp.list_tools()
 
     assert "report_progress" in {tool.name for tool in tools}
+
+
+def test_needs_human_disabled_maps_m_submission_to_approved() -> None:
+    controller = make_controller(allow_needs_human=False)
+    record = controller.submit_claim(make_claim("claim-1", ("src/api/**",)))
+    assert record.state is ClaimState.ASSESSING
+
+    # M says "can't decide, needs human" — but the server has needs_human
+    # disabled, so C resolves the claim deterministically.
+    controller.submit_coordination_decision(
+        "team/project",
+        "claim-1",
+        Decision(ClaimState.NEEDS_HUMAN, "M cannot decide reliably"),
+    )
+
+    state = controller.get_claim_state("team/project", "claim-1")
+    assert state["state"] == "approved"
+    assert "needs_human is disabled" in state["decision"]["reason"]
+
+
+def test_needs_human_disabled_cycle_breaks_deterministically() -> None:
+    clock = FakeClock()
+    controller = make_controller(
+        m_decision_timeout=60,
+        execution_timeout=3600,
+        allow_needs_human=False,
+        clock=clock,
+    )
+    controller.submit_claim(make_claim("claim-2", ("src/x/**",)))
+    waiting = controller.submit_claim(make_claim("claim-1", ("src/x/**",)))
+    assert waiting.state is ClaimState.WAITING
+
+    clock.advance(61)
+    state = controller.get_claim_state("team/project", "claim-2")
+
+    assert state["state"] == "approved_with_constraints"
+    assert "needs_human is disabled" in state["decision"]["reason"]
+    assert "feature/agent-claim-1/claim-1" in state["decision"]["constraints"]
+
+
+def test_needs_human_enabled_keeps_human_escalation() -> None:
+    controller = make_controller()
+    record = controller.submit_claim(make_claim("claim-1", ("src/api/**",)))
+    assert record.state is ClaimState.ASSESSING
+
+    controller.submit_coordination_decision(
+        "team/project",
+        "claim-1",
+        Decision(ClaimState.NEEDS_HUMAN, "M cannot decide reliably"),
+    )
+
+    state = controller.get_claim_state("team/project", "claim-1")
+    assert state["state"] == "needs_human"

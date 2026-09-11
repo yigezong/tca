@@ -50,6 +50,7 @@ def build_components() -> tuple[Controller, GitHubWebhookHandler | None]:
         execution_timeout=_float_env("TCA_EXECUTION_TIMEOUT_SECONDS", 3600.0),
         heartbeat_timeout=_float_env("TCA_HEARTBEAT_TIMEOUT_SECONDS", 900.0),
         m_decision_timeout=_float_env("TCA_M_DECISION_TIMEOUT_SECONDS", 600.0),
+        allow_needs_human=not _bool_env("TCA_DISABLE_NEEDS_HUMAN", False),
     )
 
     github = None
@@ -74,6 +75,13 @@ def _float_env(name: str, default: float) -> float:
         return float(raw)
     except ValueError:
         return default
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw not in {"0", "false", "no", "off"}
 
 
 def create_app():
