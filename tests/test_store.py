@@ -65,3 +65,54 @@ def test_new_claim_must_start_at_version_one() -> None:
             raise AssertionError("new claim version 2 should be rejected")
     finally:
         store.close()
+
+
+def test_coordination_lease_excludes_other_workers_and_recovers_after_expiry() -> None:
+    store = ClaimStore()
+    try:
+        claim = make_claim("team/project", "claim-1")
+        store.save_received(claim)
+        store.queue_coordination(
+            claim.project_id, claim.claim_id, now="2026-01-01T00:00:00+00:00"
+        )
+
+        assert store.claim_coordination(
+            claim.project_id,
+            "worker-1",
+            30,
+            now="2026-01-01T00:00:00+00:00",
+        ) == (claim.project_id, claim.claim_id)
+        assert store.claim_coordination(
+            claim.project_id,
+            "worker-2",
+            30,
+            now="2026-01-01T00:00:29+00:00",
+        ) is None
+        assert store.claim_coordination(
+            claim.project_id,
+            "worker-2",
+            30,
+            now="2026-01-01T00:00:31+00:00",
+        ) == (claim.project_id, claim.claim_id)
+    finally:
+        store.close()
+
+
+def test_coordination_lease_requires_the_worker_that_claimed_it() -> None:
+    store = ClaimStore()
+    try:
+        claim = make_claim("team/project", "claim-1")
+        store.save_received(claim)
+        store.queue_coordination(claim.project_id, claim.claim_id)
+        assert store.claim_coordination(claim.project_id, "worker-1", 30) is not None
+
+        try:
+            store.validate_coordination_lease(
+                claim.project_id, claim.claim_id, "worker-2"
+            )
+        except ValueError as error:
+            assert "not leased" in str(error)
+        else:
+            raise AssertionError("another worker must not decide a leased task")
+    finally:
+        store.close()

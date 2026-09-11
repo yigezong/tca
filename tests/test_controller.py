@@ -54,6 +54,30 @@ def test_claim_without_hard_conflicts_is_queued_for_m() -> None:
     assert task.claim.claim.claim_id == "claim-1"
 
 
+def test_leased_coordination_task_only_accepts_its_worker_decision() -> None:
+    controller = make_controller()
+    controller.submit_claim(make_claim("claim-1", ("src/login/**",)))
+    task = controller.lease_coordination_task("team/project", "worker-1", 300)
+    assert task is not None
+    assert controller.lease_coordination_task("team/project", "worker-2", 300) is None
+
+    with pytest.raises(ValueError, match="not leased"):
+        controller.submit_coordination_decision(
+            "team/project",
+            "claim-1",
+            Decision(ClaimState.APPROVED, "wrong worker"),
+            worker_id="worker-2",
+        )
+
+    decided = controller.submit_coordination_decision(
+        "team/project",
+        "claim-1",
+        Decision(ClaimState.APPROVED, "right worker"),
+        worker_id="worker-1",
+    )
+    assert decided.state is ClaimState.APPROVED
+
+
 def test_overlapping_claim_is_released_directly_after_completion() -> None:
     controller = make_controller()
     first = controller.submit_claim(make_claim("claim-1", ("src/session/**",)))

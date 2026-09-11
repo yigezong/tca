@@ -79,6 +79,24 @@ async def test_wait_for_coordination_task_returns_pending_task() -> None:
 
 
 @pytest.mark.anyio
+async def test_mcp_leases_coordination_task_to_the_requesting_worker() -> None:
+    mcp, controller = make_mcp()
+    controller.submit_claim(make_claim("claim-1"))
+
+    _, first = await mcp.call_tool(
+        "wait_for_coordination_task",
+        {"project_id": "team/project", "timeout_seconds": 0, "worker_id": "m-1"},
+    )
+    _, second = await mcp.call_tool(
+        "wait_for_coordination_task",
+        {"project_id": "team/project", "timeout_seconds": 0, "worker_id": "m-2"},
+    )
+
+    assert first["result"]["claim"]["claim"]["claim_id"] == "claim-1"
+    assert second == {"result": None}
+
+
+@pytest.mark.anyio
 async def test_mcp_claim_tools_are_project_scoped() -> None:
     mcp, controller = make_mcp()
     controller.submit_claim(make_claim("claim-1"))

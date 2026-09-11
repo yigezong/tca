@@ -111,11 +111,15 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
         project_id: str = "",
         timeout_seconds: float = 30.0,
         poll_seconds: float = 0.25,
+        worker_id: str = "agent-m",
+        lease_seconds: float = 300.0,
     ) -> dict[str, object] | None:
-        """For M: wait for a task plus active_claims and completed_claims context."""
+        """For M: lease a task plus context; expired leases are automatically retried."""
         deadline = time.monotonic() + max(0.0, timeout_seconds)
         while True:
-            task = controller.get_coordination_task(project_id or None)
+            task = controller.lease_coordination_task(
+                project_id or None, worker_id, lease_seconds
+            )
             if task is not None or time.monotonic() >= deadline:
                 return task.to_mapping() if task else None
             await asyncio.sleep(max(0.05, poll_seconds))
@@ -129,6 +133,7 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
         constraints: list[str] | None = None,
         wait_for: list[str] | None = None,
         conflicts_with: list[str] | None = None,
+        worker_id: str | None = None,
     ) -> dict[str, object]:
         """For M: submit a recommendation; C validates and applies it."""
         decision = Decision.from_mapping(
@@ -141,7 +146,7 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
             }
         )
         return controller.submit_coordination_decision(
-            project_id, claim_id, decision
+            project_id, claim_id, decision, worker_id=worker_id
         ).to_mapping()
 
     return mcp

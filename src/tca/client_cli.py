@@ -282,11 +282,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     task = subparsers.add_parser("task", help="M: wait for a coordination task.")
     task.add_argument("--timeout", type=float, default=30.0)
+    task.add_argument("--worker-id", default=os.getenv("TCA_AGENT_ID", "agent-m"))
 
     watch = subparsers.add_parser(
         "watch", help="M: continuously wait for and auto-decide coordination tasks."
     )
     watch.add_argument("--timeout", type=float, default=30.0)
+    watch.add_argument("--worker-id", default=os.getenv("TCA_AGENT_ID", "agent-m"))
     watch.add_argument("--max-tasks", type=int, default=0)
     watch.add_argument(
         "--idle-exit",
@@ -311,6 +313,7 @@ def build_parser() -> argparse.ArgumentParser:
     approve.add_argument("--constraint", action="append", default=[])
     approve.add_argument("--wait-for", action="append", default=[])
     approve.add_argument("--conflicts-with", action="append", default=[])
+    approve.add_argument("--worker-id", default=os.getenv("TCA_AGENT_ID", "agent-m"))
 
     state = subparsers.add_parser("state", help="A/M: get claim state.")
     state.add_argument("claim_id")
@@ -380,6 +383,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any] | None:
                 "project_id": project_id,
                 "timeout_seconds": args.timeout,
                 "poll_seconds": 0.25,
+                "worker_id": args.worker_id,
             },
         )
     if args.command == "watch":
@@ -393,6 +397,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any] | None:
                     "project_id": project_id,
                     "timeout_seconds": args.timeout,
                     "poll_seconds": 0.25,
+                    "worker_id": args.worker_id,
                 },
             )
             if task is None:
@@ -417,6 +422,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any] | None:
                 arguments={
                     "project_id": project_id,
                     "claim_id": claim_id,
+                    "worker_id": args.worker_id,
                     **decision,
                 },
             )
@@ -443,6 +449,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any] | None:
                 "constraints": args.constraint,
                 "wait_for": args.wait_for,
                 "conflicts_with": args.conflicts_with,
+                "worker_id": args.worker_id,
             },
         )
     if args.command == "state":

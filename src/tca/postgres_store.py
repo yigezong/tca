@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import psycopg
@@ -55,13 +55,15 @@ class PostgresClaimStore:
                 status TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
+                leased_by TEXT,
+                lease_expires_at TEXT,
                 PRIMARY KEY (project_id, claim_id)
             )""",
             "DROP INDEX IF EXISTS claims_project_state",
             "CREATE INDEX claims_project_state ON claims(project_id, state)",
             "DROP INDEX IF EXISTS coordination_tasks_pending",
             """CREATE INDEX IF NOT EXISTS coordination_tasks_pending
-                ON coordination_tasks(status, created_at)""",
+                ON coordination_tasks(status, lease_expires_at, created_at)""",
         )
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -75,6 +77,12 @@ class PostgresClaimStore:
                     cursor.execute(
                         sql.SQL(
                             "ALTER TABLE claims ADD COLUMN IF NOT EXISTS {} TEXT"
+                        ).format(sql.Identifier(column))
+                    )
+                for column in ("leased_by", "lease_expires_at"):
+                    cursor.execute(
+                        sql.SQL(
+                            "ALTER TABLE coordination_tasks ADD COLUMN IF NOT EXISTS {} TEXT"
                         ).format(sql.Identifier(column))
                     )
                 self._ensure_primary_key(cursor, "claims")
@@ -254,13 +262,16 @@ class PostgresClaimStore:
         with self._connect() as connection:
             connection.execute(
                 """INSERT INTO coordination_tasks
-                (project_id, claim_id, claim_revision, status, created_at, updated_at)
-                VALUES (%s, %s, %s, 'pending', %s, %s)
+                (project_id, claim_id, claim_revision, status, created_at, updated_at,
+                 leased_by, lease_expires_at)
+                VALUES (%s, %s, %s, 'pending', %s, %s, NULL, NULL)
                 ON CONFLICT(project_id, claim_id) DO UPDATE SET
                     claim_revision = EXCLUDED.claim_revision,
                     status = 'pending',
                     created_at = EXCLUDED.created_at,
-                    updated_at = EXCLUDED.updated_at""",
+                    updated_at = EXCLUDED.updated_at,
+                    leased_by = NULL,
+                    lease_expires_at = NULL""",
                 (
                     record.claim.project_id,
                     claim_id,
@@ -285,17 +296,87 @@ class PostgresClaimStore:
             row = connection.execute(query, parameters).fetchone()
         return (str(row["project_id"]), str(row["claim_id"])) if row else None
 
-    def complete_coordination(self, project_id: str, claim_id: str) -> None:
+    def claim_coordination(
+        self,
+        project_id: str | None,
+        worker_id: str,
+        lease_seconds: float,
+        now: str | None = None,
+    ) -> tuple[str, str] | None:
+        if not worker_id.strip():
+            raise ValueError("worker_id is required to lease a coordination task")
+        now = now or _now()
+        expires_at = (
+            datetime.fromisoformat(now) + timedelta(seconds=max(1.0, lease_seconds))
+        ).isoformat()
+        scope = ""
+        parameters: list[object] = [now]
+        if project_id:
+            scope = " AND project_id = %s"
+            parameters.append(project_id)
+        parameters.extend([worker_id, expires_at, now])
+        with self._connect() as connection:
+            row = connection.execute(
+                f"""WITH candidate AS (
+                    SELECT project_id, claim_id FROM coordination_tasks
+                    WHERE (status = 'pending' OR (status = 'leased' AND lease_expires_at <= %s))
+                    {scope}
+                    ORDER BY created_at
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT 1
+                )
+                UPDATE coordination_tasks AS task
+                SET status = 'leased', leased_by = %s, lease_expires_at = %s,
+                    updated_at = %s
+                FROM candidate
+                WHERE task.project_id = candidate.project_id
+                  AND task.claim_id = candidate.claim_id
+                RETURNING task.project_id, task.claim_id""",
+                parameters,
+            ).fetchone()
+        return (str(row["project_id"]), str(row["claim_id"])) if row else None
+
+    def complete_coordination(
+        self,
+        project_id: str,
+        claim_id: str,
+        worker_id: str | None = None,
+        now: str | None = None,
+    ) -> None:
+        now = now or _now()
+        if worker_id is None:
+            condition = "status IN ('pending', 'leased')"
+            parameters: tuple[object, ...] = (now, project_id, claim_id)
+        else:
+            condition = "status = 'leased' AND leased_by = %s AND lease_expires_at > %s"
+            parameters = (now, project_id, claim_id, worker_id, now)
         with self._connect() as connection:
             cursor = connection.execute(
                 """UPDATE coordination_tasks SET status = 'completed', updated_at = %s
-                WHERE project_id = %s AND claim_id = %s AND status = 'pending'""",
-                (_now(), project_id, claim_id),
+                , leased_by = NULL, lease_expires_at = NULL
+                WHERE project_id = %s AND claim_id = %s AND """ + condition,
+                parameters,
             )
             if cursor.rowcount != 1:
                 raise ValueError(
-                    f"claim {project_id}:{claim_id} has no pending coordination task"
+                    f"claim {project_id}:{claim_id} has no completable coordination task"
                 )
+
+    def validate_coordination_lease(
+        self, project_id: str, claim_id: str, worker_id: str, now: str | None = None
+    ) -> None:
+        now = now or _now()
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT 1 FROM coordination_tasks
+                WHERE project_id = %s AND claim_id = %s AND status = 'leased'
+                  AND leased_by = %s AND lease_expires_at > %s""",
+                (project_id, claim_id, worker_id, now),
+            ).fetchone()
+        if row is None:
+            raise ValueError(
+                f"claim {project_id}:{claim_id} is not leased to worker {worker_id}"
+            )
 
     def record_execution_start(
         self, project_id: str, claim_id: str, ts: str
@@ -329,7 +410,8 @@ class PostgresClaimStore:
         with self._connect() as connection:
             row = connection.execute(
                 """SELECT created_at FROM coordination_tasks
-                WHERE project_id = %s AND claim_id = %s AND status = 'pending'""",
+                WHERE project_id = %s AND claim_id = %s
+                  AND status IN ('pending', 'leased')""",
                 (project_id, claim_id),
             ).fetchone()
         return str(row["created_at"]) if row else None

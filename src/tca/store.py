@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from .domain import (
@@ -39,7 +39,7 @@ class ClaimStore:
         self._connection.execute("DROP INDEX IF EXISTS coordination_tasks_pending")
         self._connection.execute(
             """CREATE INDEX coordination_tasks_pending
-            ON coordination_tasks(status, created_at)"""
+            ON coordination_tasks(status, lease_expires_at, created_at)"""
         )
 
     def _ensure_claims_table(self) -> None:
@@ -80,6 +80,7 @@ class ClaimStore:
             "project_id",
             "claim_id",
         ):
+            self._ensure_coordination_task_columns()
             return
         self._connection.execute(
             "ALTER TABLE coordination_tasks RENAME TO coordination_tasks_old"
@@ -92,6 +93,18 @@ class ClaimStore:
             FROM coordination_tasks_old"""
         )
         self._connection.execute("DROP TABLE coordination_tasks_old")
+        self._ensure_coordination_task_columns()
+
+    def _ensure_coordination_task_columns(self) -> None:
+        existing = {
+            str(row["name"])
+            for row in self._connection.execute("PRAGMA table_info(coordination_tasks)")
+        }
+        for name in ("leased_by", "lease_expires_at"):
+            if name not in existing:
+                self._connection.execute(
+                    f"ALTER TABLE coordination_tasks ADD COLUMN {name} TEXT"
+                )
 
     def _table_exists(self, name: str) -> bool:
         row = self._connection.execute(
@@ -135,6 +148,8 @@ class ClaimStore:
                 status TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
+                leased_by TEXT,
+                lease_expires_at TEXT,
                 PRIMARY KEY (project_id, claim_id)
             )"""
         )
@@ -284,13 +299,16 @@ class ClaimStore:
         with self._lock, self._connection:
             self._connection.execute(
                 """INSERT INTO coordination_tasks
-                (project_id, claim_id, claim_revision, status, created_at, updated_at)
-                VALUES (?, ?, ?, 'pending', ?, ?)
+                (project_id, claim_id, claim_revision, status, created_at, updated_at,
+                 leased_by, lease_expires_at)
+                VALUES (?, ?, ?, 'pending', ?, ?, NULL, NULL)
                 ON CONFLICT(project_id, claim_id) DO UPDATE SET
                     claim_revision = excluded.claim_revision,
                     status = 'pending',
                     created_at = excluded.created_at,
-                    updated_at = excluded.updated_at""",
+                    updated_at = excluded.updated_at,
+                    leased_by = NULL,
+                    lease_expires_at = NULL""",
                 (
                     record.claim.project_id,
                     claim_id,
@@ -315,17 +333,88 @@ class ClaimStore:
             row = self._connection.execute(query, parameters).fetchone()
         return (str(row["project_id"]), str(row["claim_id"])) if row else None
 
-    def complete_coordination(self, project_id: str, claim_id: str) -> None:
+    def claim_coordination(
+        self,
+        project_id: str | None,
+        worker_id: str,
+        lease_seconds: float,
+        now: str | None = None,
+    ) -> tuple[str, str] | None:
+        """Atomically lease the oldest available coordination task.
+
+        A lease expires rather than being lost when a coordinator crashes.  The
+        caller must use the same worker_id when submitting its decision.
+        """
+        if not worker_id.strip():
+            raise ValueError("worker_id is required to lease a coordination task")
+        now = now or _now()
+        expires_at = (
+            datetime.fromisoformat(now) + timedelta(seconds=max(1.0, lease_seconds))
+        ).isoformat()
+        query = """SELECT project_id, claim_id FROM coordination_tasks
+            WHERE (status = 'pending' OR (status = 'leased' AND lease_expires_at <= ?))"""
+        parameters: list[object] = [now]
+        if project_id:
+            query += " AND project_id = ?"
+            parameters.append(project_id)
+        query += " ORDER BY created_at LIMIT 1"
+        with self._lock, self._connection:
+            row = self._connection.execute(query, parameters).fetchone()
+            if row is None:
+                return None
+            task_project_id, claim_id = str(row["project_id"]), str(row["claim_id"])
+            cursor = self._connection.execute(
+                """UPDATE coordination_tasks
+                SET status = 'leased', leased_by = ?, lease_expires_at = ?, updated_at = ?
+                WHERE project_id = ? AND claim_id = ?
+                  AND (status = 'pending' OR (status = 'leased' AND lease_expires_at <= ?))""",
+                (worker_id, expires_at, now, task_project_id, claim_id, now),
+            )
+            if cursor.rowcount != 1:
+                return None
+        return task_project_id, claim_id
+
+    def complete_coordination(
+        self,
+        project_id: str,
+        claim_id: str,
+        worker_id: str | None = None,
+        now: str | None = None,
+    ) -> None:
+        now = now or _now()
+        if worker_id is None:
+            condition = "status IN ('pending', 'leased')"
+            parameters: tuple[object, ...] = (now, project_id, claim_id)
+        else:
+            condition = "status = 'leased' AND leased_by = ? AND lease_expires_at > ?"
+            parameters = (now, project_id, claim_id, worker_id, now)
         with self._lock, self._connection:
             cursor = self._connection.execute(
                 """UPDATE coordination_tasks SET status = 'completed', updated_at = ?
-                WHERE project_id = ? AND claim_id = ? AND status = 'pending'""",
-                (_now(), project_id, claim_id),
+                , leased_by = NULL, lease_expires_at = NULL
+                WHERE project_id = ? AND claim_id = ? AND """ + condition,
+                parameters,
             )
             if cursor.rowcount != 1:
                 raise ValueError(
-                    f"claim {project_id}:{claim_id} has no pending coordination task"
+                    f"claim {project_id}:{claim_id} has no completable coordination task"
                 )
+
+    def validate_coordination_lease(
+        self, project_id: str, claim_id: str, worker_id: str, now: str | None = None
+    ) -> None:
+        now = now or _now()
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT 1 FROM coordination_tasks
+                WHERE project_id = ? AND claim_id = ? AND status = 'leased'
+                  AND leased_by = ? AND lease_expires_at > ?""",
+                (project_id, claim_id, worker_id, now),
+            ).fetchone()
+        if row is None:
+            raise ValueError(
+                f"claim {project_id}:{claim_id} is not leased to worker {worker_id}"
+            )
 
     def record_execution_start(
         self, project_id: str, claim_id: str, ts: str
@@ -358,7 +447,8 @@ class ClaimStore:
         with self._lock:
             row = self._connection.execute(
                 """SELECT created_at FROM coordination_tasks
-                WHERE project_id = ? AND claim_id = ? AND status = 'pending'""",
+                WHERE project_id = ? AND claim_id = ?
+                  AND status IN ('pending', 'leased')""",
                 (project_id, claim_id),
             ).fetchone()
         return str(row["created_at"]) if row else None

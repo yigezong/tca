@@ -324,6 +324,24 @@ class Controller:
     ) -> CoordinationTask | None:
         self.run_deadline_checks(project_id)
         claim_key = self.store.next_coordination_claim(project_id)
+        return self._coordination_task_from_key(claim_key)
+
+    def lease_coordination_task(
+        self,
+        project_id: str | None,
+        worker_id: str,
+        lease_seconds: float = 300.0,
+    ) -> CoordinationTask | None:
+        """Lease one task to an M worker so another worker cannot also decide it."""
+        self.run_deadline_checks(project_id)
+        claim_key = self.store.claim_coordination(
+            project_id, worker_id, lease_seconds, now=self._now_iso()
+        )
+        return self._coordination_task_from_key(claim_key)
+
+    def _coordination_task_from_key(
+        self, claim_key: tuple[str, str] | None
+    ) -> CoordinationTask | None:
         if claim_key is None:
             return None
         task_project_id, claim_id = claim_key
@@ -344,7 +362,11 @@ class Controller:
         return CoordinationTask(record, active, completed)
 
     def submit_coordination_decision(
-        self, project_id: str, claim_id: str, decision: Decision
+        self,
+        project_id: str,
+        claim_id: str,
+        decision: Decision,
+        worker_id: str | None = None,
     ) -> ClaimRecord:
         self.run_deadline_checks(project_id)
         if decision.state is ClaimState.NEEDS_HUMAN and not self.allow_needs_human:
@@ -375,6 +397,10 @@ class Controller:
         }
         if decision.state not in allowed_states:
             raise ValueError(f"M cannot move a Claim to {decision.state.value}")
+        if worker_id is not None:
+            self.store.validate_coordination_lease(
+                project_id, claim_id, worker_id, now=self._now_iso()
+            )
         record = self.store.transition(
             project_id,
             claim_id,
@@ -382,7 +408,7 @@ class Controller:
             decision.state,
             decision=decision,
         )
-        self.store.complete_coordination(project_id, claim_id)
+        self.store.complete_coordination(project_id, claim_id, worker_id=worker_id)
         return record
 
     def _assess_or_queue(

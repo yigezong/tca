@@ -35,7 +35,25 @@ class Store(Protocol):
         self, project_id: str | None = None
     ) -> tuple[str, str] | None: ...
 
-    def complete_coordination(self, project_id: str, claim_id: str) -> None: ...
+    def claim_coordination(
+        self,
+        project_id: str | None,
+        worker_id: str,
+        lease_seconds: float,
+        now: str | None = None,
+    ) -> tuple[str, str] | None: ...
+
+    def complete_coordination(
+        self,
+        project_id: str,
+        claim_id: str,
+        worker_id: str | None = None,
+        now: str | None = None,
+    ) -> None: ...
+
+    def validate_coordination_lease(
+        self, project_id: str, claim_id: str, worker_id: str, now: str | None = None
+    ) -> None: ...
 
     def record_execution_start(
         self, project_id: str, claim_id: str, ts: str
