@@ -69,11 +69,11 @@ def test_execution_timeout_auto_completes_and_releases_waiter() -> None:
     assert state["state"] == "completed"
     assert "deadline" in state["decision"]["reason"]
 
-    # A2 is released: re-queued for M and can be approved right away.
+    # A2 is released without depending on another M turn.
     released = controller.store.get("team/project", "claim-2")
-    assert released.state is ClaimState.ASSESSING
-    approve(controller, "claim-2")
-    assert controller.store.get("team/project", "claim-2").state is ClaimState.APPROVED
+    assert released.state is ClaimState.APPROVED_WITH_CONSTRAINTS
+    assert released.decision is not None
+    assert "completed overlapping work" in released.decision.constraints[0]
 
 
 def test_heartbeat_extends_execution_deadline() -> None:
@@ -118,7 +118,7 @@ def test_m_decision_timeout_falls_back_to_rule_checker() -> None:
     assert controller.get_coordination_task("team/project") is None
 
 
-def test_m_decision_timeout_with_wait_cycle_escalates_to_human() -> None:
+def test_m_decision_timeout_breaks_path_overlap_wait_cycle() -> None:
     clock = FakeClock()
     controller = make_controller(
         m_decision_timeout=60, execution_timeout=3600, clock=clock
@@ -130,8 +130,8 @@ def test_m_decision_timeout_with_wait_cycle_escalates_to_human() -> None:
     clock.advance(61)
     state = controller.get_claim_state("team/project", "claim-2")
 
-    assert state["state"] == "needs_human"
-    assert "wait cycle" in state["decision"]["reason"]
+    assert state["state"] == "approved_with_constraints"
+    assert "path-overlap wait cycle" in state["decision"]["reason"]
 
 
 def test_start_execution_and_complete_claim_are_idempotent() -> None:
@@ -205,8 +205,8 @@ def test_needs_human_disabled_cycle_breaks_deterministically() -> None:
     state = controller.get_claim_state("team/project", "claim-2")
 
     assert state["state"] == "approved_with_constraints"
-    assert "needs_human is disabled" in state["decision"]["reason"]
-    assert "feature/agent-claim-1/claim-1" in state["decision"]["constraints"]
+    assert "path-overlap wait cycle" in state["decision"]["reason"]
+    assert "declared planned_paths" in state["decision"]["constraints"][0]
 
 
 def test_needs_human_enabled_keeps_human_escalation() -> None:

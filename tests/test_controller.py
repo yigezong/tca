@@ -54,7 +54,7 @@ def test_claim_without_hard_conflicts_is_queued_for_m() -> None:
     assert task.claim.claim.claim_id == "claim-1"
 
 
-def test_overlapping_claim_waits_and_reassesses_after_completion() -> None:
+def test_overlapping_claim_is_released_directly_after_completion() -> None:
     controller = make_controller()
     first = controller.submit_claim(make_claim("claim-1", ("src/session/**",)))
     approve_claim(controller, first.claim.claim_id)
@@ -69,14 +69,13 @@ def test_overlapping_claim_waits_and_reassesses_after_completion() -> None:
     controller.complete_claim("team/project", "claim-1")
 
     reassessed = controller.store.get("team/project", "claim-2")
-    assert reassessed.state is ClaimState.ASSESSING
-    task = controller.get_coordination_task("team/project")
-    assert task is not None
-    assert task.claim.claim.claim_id == "claim-2"
-    assert task.active_claims == ()
-    assert [(record.claim.claim_id, record.state) for record in task.completed_claims] == [
-        ("claim-1", ClaimState.COMPLETED)
-    ]
+    assert reassessed.state is ClaimState.APPROVED_WITH_CONSTRAINTS
+    assert reassessed.decision is not None
+    assert reassessed.decision.constraints == (
+        "Inspect and incorporate the completed overlapping work before editing: "
+        "feature/agent-claim-1/claim-1",
+    )
+    assert controller.get_coordination_task("team/project") is None
 
 
 def test_new_overlap_sees_completed_unintegrated_claim() -> None:

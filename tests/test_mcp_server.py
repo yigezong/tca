@@ -109,11 +109,6 @@ async def test_wait_for_decision_waits_through_waiting_claims() -> None:
     async def release_waiter() -> None:
         await asyncio.sleep(0.05)
         controller.complete_claim("team/project", first.claim.claim_id)
-        controller.submit_coordination_decision(
-            "team/project",
-            second.claim.claim_id,
-            Decision(ClaimState.APPROVED, "second claim may now run"),
-        )
 
     release_task = asyncio.create_task(release_waiter())
     _, result = await mcp.call_tool(
@@ -127,7 +122,7 @@ async def test_wait_for_decision_waits_through_waiting_claims() -> None:
     )
     await release_task
 
-    assert result["state"] == "approved"
+    assert result["state"] == "approved_with_constraints"
     assert result["allowed_actions"] == ["start_execution"]
 
 

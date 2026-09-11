@@ -125,7 +125,23 @@ class Controller:
                 record.claim.claim_id, decision.wait_for, active
             )
         ):
-            if not self.allow_needs_human:
+            # M did not answer, so a cycle caused only by path overlap must not
+            # consume both agents' execution windows. C elects this assessing
+            # claim as the deterministic first mover. Explicit dependency cycles
+            # retain their normal needs-human behavior below.
+            if decision.reason == "planned paths overlap active claims":
+                decision = Decision(
+                    state=ClaimState.APPROVED_WITH_CONSTRAINTS,
+                    reason=(
+                        "M decision deadline elapsed; C broke a path-overlap "
+                        f"wait cycle deterministically (wait_for={', '.join(decision.wait_for)})"
+                    ),
+                    constraints=(
+                        "Implement only your declared planned_paths on your work_branch.",
+                        "The waiting overlapping claim will be re-evaluated after completion.",
+                    ),
+                )
+            elif not self.allow_needs_human:
                 constraints = tuple(
                     sorted(
                         {
@@ -401,6 +417,33 @@ class Controller:
                 {ClaimState.WAITING},
                 ClaimState.ASSESSING,
             )
+            # A waiter caused solely by an overlapping path has already received
+            # its ordering decision. Once its predecessor completes, it can move
+            # forward with an explicit branch-integration constraint; making it
+            # wait for M again recreates the case-20 liveness hole.
+            if record.decision.reason == "planned paths overlap active claims":
+                remaining = self.store.list_active(
+                    record.claim.project_id, exclude=record.claim.claim_id
+                )
+                if self.rule_checker.check(record.claim, remaining) is None:
+                    constraints = ()
+                    state = ClaimState.APPROVED
+                    reason = "overlapping predecessor is integrated; approved by C"
+                    if trigger.state is ClaimState.COMPLETED:
+                        state = ClaimState.APPROVED_WITH_CONSTRAINTS
+                        constraints = (
+                            "Inspect and incorporate the completed overlapping work before editing: "
+                            + trigger.claim.work_branch,
+                        )
+                        reason = "overlapping predecessor completed; approved by C with integration constraint"
+                    self.store.transition(
+                        record.claim.project_id,
+                        record.claim.claim_id,
+                        {ClaimState.ASSESSING},
+                        state,
+                        decision=Decision(state, reason, constraints=constraints),
+                    )
+                    continue
             others = self.store.list_coordination_context(
                 record.claim.project_id, exclude=record.claim.claim_id
             )
