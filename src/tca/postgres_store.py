@@ -59,11 +59,6 @@ class PostgresClaimStore:
                 lease_expires_at TEXT,
                 PRIMARY KEY (project_id, claim_id)
             )""",
-            "DROP INDEX IF EXISTS claims_project_state",
-            "CREATE INDEX claims_project_state ON claims(project_id, state)",
-            "DROP INDEX IF EXISTS coordination_tasks_pending",
-            """CREATE INDEX IF NOT EXISTS coordination_tasks_pending
-                ON coordination_tasks(status, lease_expires_at, created_at)""",
         )
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -85,6 +80,17 @@ class PostgresClaimStore:
                             "ALTER TABLE coordination_tasks ADD COLUMN IF NOT EXISTS {} TEXT"
                         ).format(sql.Identifier(column))
                     )
+                # Existing production tables predate lease_expires_at.  The
+                # migration must run before creating an index that uses it.
+                cursor.execute("DROP INDEX IF EXISTS claims_project_state")
+                cursor.execute(
+                    "CREATE INDEX claims_project_state ON claims(project_id, state)"
+                )
+                cursor.execute("DROP INDEX IF EXISTS coordination_tasks_pending")
+                cursor.execute(
+                    """CREATE INDEX IF NOT EXISTS coordination_tasks_pending
+                    ON coordination_tasks(status, lease_expires_at, created_at)"""
+                )
                 self._ensure_primary_key(cursor, "claims")
                 self._ensure_primary_key(cursor, "coordination_tasks")
 
