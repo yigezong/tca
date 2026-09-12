@@ -135,6 +135,31 @@ def test_m_cannot_escalate_to_needs_human_but_owner_can_request_alignment() -> N
     assert aligned.decision.reason.startswith("A requested requirements alignment:")
 
 
+def test_owner_can_pause_execution_for_requirements_alignment_and_resume() -> None:
+    controller = make_controller()
+    claim = controller.submit_claim(make_claim("claim-1", ("src/login/**",)))
+    approve_claim(controller, claim.claim.claim_id)
+    controller.start_execution(claim.claim.project_id, claim.claim.claim_id)
+
+    aligned = controller.request_requirements_alignment(
+        claim.claim.project_id,
+        claim.claim.claim_id,
+        claim.claim.author,
+        "the positional argument semantics are ambiguous",
+    )
+    assert aligned.state is ClaimState.NEEDS_HUMAN
+
+    resolved = controller.resolve_privileged_review(
+        claim.claim.project_id,
+        claim.claim.claim_id,
+        Decision(ClaimState.APPROVED_WITH_CONSTRAINTS, "P clarified the interface"),
+    )
+    assert resolved.state is ClaimState.APPROVED_WITH_CONSTRAINTS
+
+    resumed = controller.start_execution(claim.claim.project_id, claim.claim.claim_id)
+    assert resumed.state is ClaimState.EXECUTING
+
+
 def test_privileged_review_only_resolves_needs_human() -> None:
     controller = make_controller()
     controller.submit_claim(make_claim("claim-1", ("src/login/**",)))

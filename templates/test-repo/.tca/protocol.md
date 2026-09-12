@@ -23,7 +23,7 @@ A 和 M 都是 TCA Server 之外的客户端，都通过 MCP 与 C 交互。
 
 Claim 除 `planned_paths` 外还可声明 `owned_symbols`（自己负责的公共符号）和
 `behavior_contracts`（不得破坏的默认行为）。A 只能修改声明的路径和符号；若需要
-若现有 Claim 无法推出接口 owner、兼容性、验收标准或可并行拆分，A 必须停止共享范围修改，调用 `request_requirements_alignment`；不得自行猜测公共 API、默认参数或行为契约。
+若现有 Claim 无法推出接口 owner、兼容性、验收标准或可并行拆分，A 必须停止该不确定部分的修改，调用 `request_requirements_alignment`；该请求既可在执行前发起，也可在 `executing` 中暂停发起。P 返回 `approved` 或 `approved_with_constraints` 后，A 再调用一次 `start_execution` 恢复工作；不得自行猜测公共 API、默认参数或行为契约。
 
 A 可在自己 worktree 的 `.tca/scratch-tests/` 写临时测试，用来验证不确定的函数、
 边界输入和兼容行为。它们不得读取官方/隐藏测试、不得读取其它 A 的 patch，且不得

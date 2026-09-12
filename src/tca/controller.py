@@ -394,7 +394,7 @@ class Controller:
     def request_requirements_alignment(
         self, project_id: str, claim_id: str, requester: str, reason: str
     ) -> ClaimRecord:
-        """Let the owning A pause before coding when requirements are ambiguous."""
+        """Let the owning A pause for requirements alignment when ambiguity appears."""
         self.run_deadline_checks(project_id)
         record = self.store.get(project_id, claim_id)
         if requester != record.claim.author:
@@ -404,6 +404,7 @@ class Controller:
             ClaimState.WAITING,
             ClaimState.APPROVED,
             ClaimState.APPROVED_WITH_CONSTRAINTS,
+            ClaimState.EXECUTING,
         }
         if record.state not in requestable:
             raise ValueError(
