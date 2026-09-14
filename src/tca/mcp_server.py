@@ -19,9 +19,9 @@ A: only start when allowed_actions includes start_execution; call complete_claim
 A: while executing, call report_progress to keep the claim alive and show progress;
    C auto-completes claims whose execution deadline elapses without complete_claim,
    and auto-resolves M decisions that stay pending too long.
-M: use wait_for_coordination_task, then submit_coordination_decision. An owning A,
-not M, requests requirements alignment when its declared contracts are insufficient.
-The alignment reviewer resolves that request from its private, local context. completed_claims are
+M: use wait_for_coordination_task, then submit_coordination_decision. P is a
+human reviewer: P1/P2 each give only their paired developer natural-language
+feedback and never inspect both patches or edit code. completed_claims are
 pending integration; overlapping work must incorporate their work branches
 or require a human decision.
 GitHub default-branch pushes automatically confirm integration. integrate_claim is only
@@ -136,6 +136,7 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
         wait_for: list[str] | None = None,
         conflicts_with: list[str] | None = None,
         uncertainty: float | None = None,
+        boundary_contract: str = "",
         worker_id: str | None = None,
     ) -> dict[str, object]:
         """For M: submit a recommendation; C validates and applies it."""
@@ -147,6 +148,7 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
                 "wait_for": wait_for or [],
                 "conflicts_with": conflicts_with or [],
                 "uncertainty": uncertainty,
+                "boundary_contract": boundary_contract,
             }
         )
         return controller.submit_coordination_decision(
@@ -177,11 +179,10 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
         alignment_acceptance: list[str] | None = None,
         alignment_split: list[str] | None = None,
     ) -> dict[str, object]:
-        """Resolve an A-owned requirements-alignment request from private context.
+        """Record a human P's natural-language feedback for one owning A.
 
-        Do not send combined.patch through MCP. P keeps that context in its
-        isolated worktree and submits only minimal requirements for the owning A.
-        uncertainty is 0 (certain) through 1 (no reliable preference).
+        Do not send any patch through MCP. P1/P2 each see only their paired
+        developer's patch; the server persists only minimal requirements.
         """
         decision = Decision.from_mapping(
             {

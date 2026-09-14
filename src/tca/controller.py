@@ -263,6 +263,7 @@ class Controller:
             raise ValueError(
                 f"illegal transition for {claim_id}: {record.state.value} -> executing"
             )
+        self._require_group_boundary(record)
         record = self.store.transition(
             project_id,
             claim_id,
@@ -271,6 +272,38 @@ class Controller:
         )
         self.store.record_execution_start(project_id, claim_id, self._now_iso())
         return record
+
+    def _require_group_boundary(self, record: ClaimRecord) -> None:
+        """Gate a team until every member accepts one boundary contract."""
+        claim = record.claim
+        if claim.expected_group_size == 1:
+            return
+        contract = record.decision.boundary_contract if record.decision else ""
+        if not contract:
+            raise ValueError("coordinated claim requires a boundary_contract")
+        peers = [
+            item
+            for item in self.store.list_active(claim.project_id)
+            if item.claim.coordination_group == claim.coordination_group
+        ]
+        if len(peers) != claim.expected_group_size:
+            raise ValueError(
+                "waiting for all claims in coordination_group "
+                f"{claim.coordination_group!r}"
+            )
+        eligible = {
+            ClaimState.APPROVED,
+            ClaimState.APPROVED_WITH_CONSTRAINTS,
+            ClaimState.EXECUTING,
+        }
+        if any(item.state not in eligible for item in peers):
+            raise ValueError("waiting for every group member to receive a boundary decision")
+        contracts = {
+            item.decision.boundary_contract if item.decision else ""
+            for item in peers
+        }
+        if contracts != {contract}:
+            raise ValueError("coordination group boundary_contracts do not match")
 
     def complete_claim(self, project_id: str, claim_id: str) -> ClaimRecord:
         self.run_deadline_checks(project_id)

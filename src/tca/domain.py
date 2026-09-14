@@ -45,6 +45,8 @@ class Claim:
     owned_symbols: tuple[str, ...] = ()
     behavior_contracts: tuple[str, ...] = ()
     temporary_checks: tuple[str, ...] = ()
+    coordination_group: str = ""
+    expected_group_size: int = 1
     version: int = 1
 
     @classmethod
@@ -64,6 +66,12 @@ class Claim:
         version = int(value.get("version", 1))
         if version < 1:
             raise ValueError("claim version must be positive")
+        coordination_group = str(value.get("coordination_group", ""))
+        expected_group_size = int(value.get("expected_group_size", 1))
+        if expected_group_size < 1:
+            raise ValueError("expected_group_size must be positive")
+        if expected_group_size > 1 and not coordination_group:
+            raise ValueError("multi-claim coordination requires coordination_group")
         return cls(
             claim_id=str(value["claim_id"]),
             project_id=str(value["project_id"]),
@@ -79,6 +87,8 @@ class Claim:
                 str(item) for item in value.get("behavior_contracts", ())
             ),
             temporary_checks=tuple(str(item) for item in value.get("temporary_checks", ())),
+            coordination_group=coordination_group,
+            expected_group_size=expected_group_size,
             version=version,
         )
 
@@ -104,6 +114,7 @@ class Decision:
     alignment_compatibility: tuple[str, ...] = ()
     alignment_acceptance: tuple[str, ...] = ()
     alignment_split: tuple[str, ...] = ()
+    boundary_contract: str = ""
 
     def to_mapping(self) -> dict[str, Any]:
         return {
@@ -117,6 +128,7 @@ class Decision:
             "alignment_compatibility": list(self.alignment_compatibility),
             "alignment_acceptance": list(self.alignment_acceptance),
             "alignment_split": list(self.alignment_split),
+            "boundary_contract": self.boundary_contract,
         }
 
     @classmethod
@@ -145,6 +157,7 @@ class Decision:
             alignment_split=tuple(
                 str(item) for item in value.get("alignment_split", ())
             ),
+            boundary_contract=str(value.get("boundary_contract", "")),
         )
 
 

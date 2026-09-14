@@ -13,6 +13,8 @@ def make_claim(
     project_id: str = "team/project",
     version: int = 1,
     dependencies: tuple[str, ...] = (),
+    coordination_group: str = "",
+    expected_group_size: int = 1,
 ) -> Claim:
     return Claim(
         claim_id=claim_id,
@@ -23,6 +25,8 @@ def make_claim(
         goal=f"implement {claim_id}",
         planned_paths=paths,
         dependencies=dependencies,
+        coordination_group=coordination_group,
+        expected_group_size=expected_group_size,
         version=version,
     )
 
@@ -76,6 +80,53 @@ def test_leased_coordination_task_only_accepts_its_worker_decision() -> None:
         worker_id="worker-1",
     )
     assert decided.state is ClaimState.APPROVED
+
+
+def test_grouped_claims_require_one_shared_boundary_contract() -> None:
+    controller = make_controller()
+    first = controller.submit_claim(
+        make_claim(
+            "a1", ("src/a.py",), coordination_group="pair-1", expected_group_size=2
+        )
+    )
+    controller.submit_coordination_decision(
+        "team/project",
+        "a1",
+        Decision(ClaimState.APPROVED, "first", boundary_contract="pair-1"),
+    )
+    with pytest.raises(ValueError, match="waiting for all claims"):
+        controller.start_execution("team/project", "a1")
+
+    second = controller.submit_claim(
+        make_claim(
+            "a2", ("src/b.py",), coordination_group="pair-1", expected_group_size=2
+        )
+    )
+    controller.submit_coordination_decision(
+        "team/project",
+        "a2",
+        Decision(ClaimState.APPROVED, "second", boundary_contract="pair-1"),
+    )
+    controller.start_execution("team/project", first.claim.claim_id)
+    assert controller.store.get("team/project", "a1").state is ClaimState.EXECUTING
+
+
+def test_grouped_claims_reject_mismatched_boundary_contracts() -> None:
+    controller = make_controller()
+    for claim_id, path in (("a1", "src/a.py"), ("a2", "src/b.py")):
+        controller.submit_claim(
+            make_claim(
+                claim_id, (path,), coordination_group="pair-1", expected_group_size=2
+            )
+        )
+    controller.submit_coordination_decision(
+        "team/project", "a1", Decision(ClaimState.APPROVED, "first", boundary_contract="one")
+    )
+    controller.submit_coordination_decision(
+        "team/project", "a2", Decision(ClaimState.APPROVED, "second", boundary_contract="two")
+    )
+    with pytest.raises(ValueError, match="boundary_contracts do not match"):
+        controller.start_execution("team/project", "a1")
 
 
 def test_privileged_review_resolves_needs_human_with_calibrated_uncertainty() -> None:
