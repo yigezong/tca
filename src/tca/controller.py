@@ -414,14 +414,22 @@ class Controller:
             self.store.validate_coordination_lease(
                 project_id, claim_id, worker_id, now=self._now_iso()
             )
+        previous = self.store.get(project_id, claim_id)
         record = self.store.transition(
             project_id,
             claim_id,
-            {ClaimState.ASSESSING},
+            # A pre-existing path-only waiter may belong to a coordinated
+            # pair. M must be able to replace that provisional WAITING state
+            # with the pair's joint decision and boundary contract.
+            {ClaimState.ASSESSING, ClaimState.WAITING},
             decision.state,
             decision=decision,
         )
-        self.store.complete_coordination(project_id, claim_id, worker_id=worker_id)
+        # WAITING claims created by the deterministic path checker have no
+        # coordination queue entry. A manual M repair is still valid, but
+        # there is no task to mark complete in that legacy state.
+        if previous.state is ClaimState.ASSESSING:
+            self.store.complete_coordination(project_id, claim_id, worker_id=worker_id)
         return record
 
     def request_requirements_alignment(

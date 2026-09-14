@@ -43,6 +43,16 @@ class BasicRuleChecker:
         for record in active_claims:
             if record.state is ClaimState.COMPLETED:
                 continue
+            # A declared coordination group is deliberately assessed by M as
+            # one unit. Do not let the path-only safety rule turn its second
+            # member into WAITING before M can attach the shared boundary
+            # contract; that creates a group-gate deadlock.
+            if (
+                claim.expected_group_size > 1
+                and claim.coordination_group
+                and claim.coordination_group == record.claim.coordination_group
+            ):
+                continue
             overlap = any(
                 paths_overlap(candidate, occupied)
                 for candidate in claim.planned_paths

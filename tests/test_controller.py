@@ -129,6 +129,36 @@ def test_grouped_claims_reject_mismatched_boundary_contracts() -> None:
         controller.start_execution("team/project", "a1")
 
 
+def test_grouped_overlapping_claims_remain_assessing_for_m() -> None:
+    controller = make_controller()
+    controller.submit_claim(
+        make_claim(
+            "a1", ("src/shared.py",), coordination_group="pair-1", expected_group_size=2
+        )
+    )
+    second = controller.submit_claim(
+        make_claim(
+            "a2", ("src/shared.py",), coordination_group="pair-1", expected_group_size=2
+        )
+    )
+
+    assert second.state is ClaimState.ASSESSING
+
+
+def test_m_can_replace_provisional_waiting_with_group_decision() -> None:
+    controller = make_controller()
+    controller.submit_claim(make_claim("a1", ("src/shared.py",)))
+    waiting = controller.submit_claim(make_claim("a2", ("src/shared.py",)))
+    assert waiting.state is ClaimState.WAITING
+
+    decided = controller.submit_coordination_decision(
+        "team/project",
+        "a2",
+        Decision(ClaimState.APPROVED_WITH_CONSTRAINTS, "pair decision", boundary_contract="pair-1"),
+    )
+    assert decided.state is ClaimState.APPROVED_WITH_CONSTRAINTS
+
+
 def test_privileged_review_resolves_needs_human_with_calibrated_uncertainty() -> None:
     controller = make_controller()
     claim = controller.submit_claim(make_claim("claim-1", ("src/login/**",)))
