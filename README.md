@@ -89,6 +89,19 @@ TCA_AGENT_ID=agent-a1
 
 A 发布新 Claim 前必须先 fetch 远端默认分支。Claim 的 `base_commit` 是此刻默认分支的完整 SHA，工作分支固定为 `feature/<agent-id>/<claim-id>`。GitHub webhook 会验证基线新鲜且确实位于 Claim 分支历史中；Claim 修订只能改目标、范围和依赖，不能改身份、基线或工作分支。
 
+## 接口先行、各自负责的并行协作
+
+主管/P 可以只给每位 A 一个自然语言 feature（CooperBench 正是这种设定），而不提供文件、函数或实现边界。每个 A 先独立阅读自己 feature 所需的源码，再自行提交可修订的技术 Claim：`planned_paths`、`owned_symbols`、行为契约和临时验证。M 不替 A 拆技术任务；默认不同 Claim 并行，不要为了“协作”让 A2 无意义地等待 A1 全部完成。
+
+若 A2 只依赖 A1 的一个稳定接口，A2 的 Claim 使用 `dependency_mode: after_interface` 与 `handoff_from: [a1-claim-id]`。A1 在该接口 commit 已可用时发布 handoff（commit、导出符号、行为契约），A2 就会带着“rebase 到该 commit、保持契约”的约束获批；此时 A1 仍可继续完成其余工作。最终提交保留 A1 的 commit 历史，A2 只对自己的增量负责。
+
+接口所有者不得被静默覆盖：A2 若确实需要接管 A1 的符号，必须声明 `takes_over_symbols`，而 A1 的 handoff 必须显式把该符号列进 `transferable_symbols`；否则 C 会置为 `needs_human`。本地可运行完整状态流：
+
+```bash
+cd /path/to/tca-timeouts
+./scripts/run_serial_handoff_demo.sh
+```
+
 `completed` 只表示工作分支已经 push 并可供集成，不表示它已经进入 `main`。completed Claim 会继续出现在 M 的协调上下文中，避免后续 Agent 从旧基线重复修改同一路径。集成者只需按团队流程 merge 并 push：GitHub 默认分支 webhook 会让 TCA 检查 completed 工作分支是否已进入该分支，并自动转为 `integrated`。
 
 自动确认要求 merge 后仍保留工作分支提交历史，普通 merge commit 和 fast-forward 都满足。关闭 webhook、使用其它 Git provider，或 squash/rebase 导致 TCA 无法证明祖先关系时，管理员核验后可用 `integrate_claim` 兜底；普通 A 不负责这项 TCA 记账。

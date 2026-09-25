@@ -36,6 +36,10 @@ async def test_mcp_exposes_wait_for_coordination_task() -> None:
     assert "get_coordination_task" not in {tool.name for tool in tools}
     assert "submit_claim" in {tool.name for tool in tools}
     assert "integrate_claim" in {tool.name for tool in tools}
+    assert "request_requirements_clarification" in {tool.name for tool in tools}
+    assert "record_subgoal_event" in {tool.name for tool in tools}
+    assert "get_integration_context" in {tool.name for tool in tools}
+    assert "publish_coordination_advice" in {tool.name for tool in tools}
 
 
 @pytest.mark.anyio
@@ -100,16 +104,15 @@ async def test_mcp_leases_coordination_task_to_the_requesting_worker() -> None:
 async def test_p_can_resolve_needs_human_with_uncertainty() -> None:
     mcp, controller = make_mcp()
     claim = controller.submit_claim(make_claim("claim-1"))
-    _, requested = await mcp.call_tool(
-        "request_requirements_alignment",
+    controller.start_execution(claim.claim.project_id, claim.claim.claim_id)
+    await mcp.call_tool(
+        "request_requirements_clarification",
         {
             "project_id": claim.claim.project_id,
             "claim_id": claim.claim.claim_id,
-            "requester": claim.claim.author,
-            "reason": "the compatibility requirement is ambiguous",
+            "question": "Which public default behavior is intended?",
         },
     )
-    assert requested["state"] == "needs_human"
 
     _, result = await mcp.call_tool(
         "resolve_privileged_review",
@@ -120,16 +123,11 @@ async def test_p_can_resolve_needs_human_with_uncertainty() -> None:
             "reason": "P reviewed the private combined patch",
             "constraints": ["Preserve the public default behavior."],
             "uncertainty": 0.8,
-            "alignment_owner": "agent-claim-1 owns the public parser interface",
-            "alignment_compatibility": ["Keep the existing call form supported."],
-            "alignment_acceptance": ["Invalid input raises ConfigError."],
-            "alignment_split": ["Consumer adapts its call site after integration."],
         },
     )
 
     assert result["state"] == "approved_with_constraints"
     assert result["decision"]["uncertainty"] == 0.8
-    assert result["decision"]["alignment_owner"] == "agent-claim-1 owns the public parser interface"
 
 
 @pytest.mark.anyio
@@ -158,13 +156,8 @@ async def test_wait_for_decision_waits_through_waiting_claims() -> None:
     )
     controller.start_execution("team/project", first.claim.claim_id)
     second = controller.submit_claim(make_claim("claim-2"))
-    assert second.state is ClaimState.WAITING
+    assert second.state is ClaimState.APPROVED_WITH_CONSTRAINTS
 
-    async def release_waiter() -> None:
-        await asyncio.sleep(0.05)
-        controller.complete_claim("team/project", first.claim.claim_id)
-
-    release_task = asyncio.create_task(release_waiter())
     _, result = await mcp.call_tool(
         "wait_for_decision",
         {
@@ -174,8 +167,6 @@ async def test_wait_for_decision_waits_through_waiting_claims() -> None:
             "poll_seconds": 0.01,
         },
     )
-    await release_task
-
     assert result["state"] == "approved_with_constraints"
     assert result["allowed_actions"] == ["start_execution"]
 

@@ -102,7 +102,7 @@ def test_github_push_loads_claim_branch_and_submits_to_controller() -> None:
     assert result.claim is not None
     assert result.claim.claim.claim_id == "claim-42"
     assert result.claim.claim.project_id == "team/project"
-    assert result.claim.state is ClaimState.ASSESSING
+    assert result.claim.state is ClaimState.APPROVED
     assert result.integrated_claims == ()
     assert github.load_calls == [
         ("team/project", "tca/claim/agent-alice/claim-42")

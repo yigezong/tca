@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from .domain import Claim, ClaimRecord, ClaimState, Decision
+from .domain import Claim, ClaimRecord, ClaimState, CoordinationAdvice, Decision, Handoff, SubgoalEvent
 
 
 class Store(Protocol):
@@ -63,8 +63,20 @@ class Store(Protocol):
         self, project_id: str, claim_id: str, progress: str, ts: str
     ) -> None: ...
 
+    def publish_handoff(
+        self, project_id: str, claim_id: str, handoff: Handoff, ts: str
+    ) -> None: ...
+
     def coordination_created_at(
         self, project_id: str, claim_id: str
     ) -> str | None: ...
 
     def list_active_all(self) -> list[ClaimRecord]: ...
+
+    def record_subgoal_event(self, event: SubgoalEvent) -> SubgoalEvent: ...
+
+    def list_subgoal_events(self, project_id: str, claim_id: str | None = None) -> list[SubgoalEvent]: ...
+
+    def publish_coordination_advice(self, advice: CoordinationAdvice) -> CoordinationAdvice: ...
+
+    def list_coordination_advice(self, project_id: str, claim_id: str) -> list[CoordinationAdvice]: ...

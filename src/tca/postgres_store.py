@@ -15,6 +15,9 @@ from .domain import (
     ClaimRecord,
     ClaimState,
     Decision,
+    Handoff,
+    CoordinationAdvice,
+    SubgoalEvent,
 )
 
 
@@ -46,6 +49,7 @@ class PostgresClaimStore:
                 executing_since TEXT,
                 last_heartbeat TEXT,
                 progress TEXT,
+                handoff TEXT,
                 PRIMARY KEY (project_id, claim_id)
             )""",
             """CREATE TABLE IF NOT EXISTS coordination_tasks (
@@ -59,6 +63,21 @@ class PostgresClaimStore:
                 lease_expires_at TEXT,
                 PRIMARY KEY (project_id, claim_id)
             )""",
+            "DROP INDEX IF EXISTS claims_project_state",
+            "CREATE INDEX claims_project_state ON claims(project_id, state)",
+            "DROP INDEX IF EXISTS coordination_tasks_pending",
+            """CREATE INDEX IF NOT EXISTS coordination_tasks_pending
+                ON coordination_tasks(status, lease_expires_at, created_at)""",
+            """CREATE TABLE IF NOT EXISTS subgoal_events (
+                id BIGSERIAL PRIMARY KEY, project_id TEXT NOT NULL,
+                claim_id TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL
+            )""",
+            """CREATE TABLE IF NOT EXISTS coordination_advice (
+                id BIGSERIAL PRIMARY KEY, project_id TEXT NOT NULL,
+                claim_id TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL
+            )""",
+            "CREATE INDEX IF NOT EXISTS subgoal_events_project_claim ON subgoal_events(project_id, claim_id, id)",
+            "CREATE INDEX IF NOT EXISTS coordination_advice_project_claim ON coordination_advice(project_id, claim_id, id)",
         )
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -68,6 +87,7 @@ class PostgresClaimStore:
                     "executing_since",
                     "last_heartbeat",
                     "progress",
+                    "handoff",
                 ):
                     cursor.execute(
                         sql.SQL(
@@ -80,17 +100,6 @@ class PostgresClaimStore:
                             "ALTER TABLE coordination_tasks ADD COLUMN IF NOT EXISTS {} TEXT"
                         ).format(sql.Identifier(column))
                     )
-                # Existing production tables predate lease_expires_at.  The
-                # migration must run before creating an index that uses it.
-                cursor.execute("DROP INDEX IF EXISTS claims_project_state")
-                cursor.execute(
-                    "CREATE INDEX claims_project_state ON claims(project_id, state)"
-                )
-                cursor.execute("DROP INDEX IF EXISTS coordination_tasks_pending")
-                cursor.execute(
-                    """CREATE INDEX IF NOT EXISTS coordination_tasks_pending
-                    ON coordination_tasks(status, lease_expires_at, created_at)"""
-                )
                 self._ensure_primary_key(cursor, "claims")
                 self._ensure_primary_key(cursor, "coordination_tasks")
 
@@ -410,6 +419,25 @@ class PostgresClaimStore:
             if cursor.rowcount != 1:
                 raise KeyError(f"{project_id}:{claim_id}")
 
+    def publish_handoff(
+        self, project_id: str, claim_id: str, handoff: Handoff, ts: str
+    ) -> None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT handoff FROM claims WHERE project_id = %s AND claim_id = %s FOR UPDATE",
+                (project_id, claim_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"{project_id}:{claim_id}")
+            encoded = json.dumps(handoff.to_mapping())
+            if row.get("handoff") and row["handoff"] != encoded:
+                raise ValueError("handoff is immutable once published")
+            connection.execute(
+                """UPDATE claims SET handoff = %s, last_heartbeat = %s, updated_at = %s
+                WHERE project_id = %s AND claim_id = %s""",
+                (encoded, ts, _now(), project_id, claim_id),
+            )
+
     def coordination_created_at(
         self, project_id: str, claim_id: str
     ) -> str | None:
@@ -433,9 +461,35 @@ class PostgresClaimStore:
             ).fetchall()
         return [self._decode(row) for row in rows]
 
+    def record_subgoal_event(self, event: SubgoalEvent) -> SubgoalEvent:
+        created = event.created_at or _now()
+        with self._connect() as connection:
+            connection.execute("INSERT INTO subgoal_events(project_id, claim_id, payload, created_at) VALUES (%s, %s, %s, %s)", (event.project_id, event.claim_id, json.dumps(event.to_mapping()), created))
+        return SubgoalEvent.from_mapping({**event.to_mapping(), "created_at": created})
+
+    def list_subgoal_events(self, project_id: str, claim_id: str | None = None) -> list[SubgoalEvent]:
+        query, args = "SELECT payload, created_at FROM subgoal_events WHERE project_id = %s", [project_id]
+        if claim_id:
+            query += " AND claim_id = %s"; args.append(claim_id)
+        with self._connect() as connection:
+            rows = connection.execute(query + " ORDER BY id", args).fetchall()
+        return [SubgoalEvent.from_mapping({**json.loads(row["payload"]), "created_at": row["created_at"]}) for row in rows]
+
+    def publish_coordination_advice(self, advice: CoordinationAdvice) -> CoordinationAdvice:
+        created = advice.created_at or _now()
+        with self._connect() as connection:
+            connection.execute("INSERT INTO coordination_advice(project_id, claim_id, payload, created_at) VALUES (%s, %s, %s, %s)", (advice.project_id, advice.claim_id, json.dumps(advice.to_mapping()), created))
+        return CoordinationAdvice.from_mapping({**advice.to_mapping(), "created_at": created})
+
+    def list_coordination_advice(self, project_id: str, claim_id: str) -> list[CoordinationAdvice]:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT payload, created_at FROM coordination_advice WHERE project_id = %s AND claim_id = %s ORDER BY id", (project_id, claim_id)).fetchall()
+        return [CoordinationAdvice.from_mapping({**json.loads(row["payload"]), "created_at": row["created_at"]}) for row in rows]
+
     @staticmethod
     def _decode(row: dict[str, Any]) -> ClaimRecord:
         decision = json.loads(row["decision"]) if row["decision"] else None
+        handoff = json.loads(row["handoff"]) if row.get("handoff") else None
         return ClaimRecord(
             claim=Claim.from_mapping(json.loads(row["payload"])),
             state=ClaimState(row["state"]),
@@ -445,4 +499,5 @@ class PostgresClaimStore:
             executing_since=row.get("executing_since") or "",
             last_heartbeat=row.get("last_heartbeat") or "",
             progress=row.get("progress") or "",
+            handoff=Handoff.from_mapping(handoff) if handoff else None,
         )

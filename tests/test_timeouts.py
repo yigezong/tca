@@ -60,7 +60,7 @@ def test_execution_timeout_auto_completes_and_releases_waiter() -> None:
     approve(controller, first.claim.claim_id)
     controller.start_execution("team/project", "claim-1")
     second = controller.submit_claim(make_claim("claim-2", ("src/session/api.py",)))
-    assert second.state is ClaimState.WAITING
+    assert second.state is ClaimState.APPROVED_WITH_CONSTRAINTS
 
     # A1 finished working but never calls complete_claim; the deadline elapses.
     clock.advance(61)
@@ -69,11 +69,11 @@ def test_execution_timeout_auto_completes_and_releases_waiter() -> None:
     assert state["state"] == "completed"
     assert "deadline" in state["decision"]["reason"]
 
-    # A2 is released without depending on another M turn.
+    # A2 was already allowed to work; timeout does not alter its boundary.
     released = controller.store.get("team/project", "claim-2")
     assert released.state is ClaimState.APPROVED_WITH_CONSTRAINTS
     assert released.decision is not None
-    assert "completed overlapping work" in released.decision.constraints[0]
+    assert "resolve any implementation or Git conflicts yourself" in released.decision.constraints[-1]
 
 
 def test_heartbeat_extends_execution_deadline() -> None:
@@ -107,15 +107,14 @@ def test_m_decision_timeout_falls_back_to_rule_checker() -> None:
         m_decision_timeout=60, execution_timeout=3600, clock=clock
     )
     record = controller.submit_claim(make_claim("claim-1", ("src/api/**",)))
-    assert record.state is ClaimState.ASSESSING
+    assert record.state is ClaimState.APPROVED
 
-    # M never submits a decision; C resolves the claim deterministically.
+    # Independent work never waits for M in the asynchronous protocol.
     clock.advance(61)
     state = controller.get_claim_state("team/project", "claim-1")
 
     assert state["state"] == "approved"
-    assert "M decision deadline" in state["decision"]["reason"]
-    assert controller.get_coordination_task("team/project") is None
+    assert "no explicit interface dependency" in state["decision"]["reason"]
 
 
 def test_m_decision_timeout_breaks_path_overlap_wait_cycle() -> None:
@@ -125,13 +124,12 @@ def test_m_decision_timeout_breaks_path_overlap_wait_cycle() -> None:
     )
     controller.submit_claim(make_claim("claim-2", ("src/x/**",)))
     waiting = controller.submit_claim(make_claim("claim-1", ("src/x/**",)))
-    assert waiting.state is ClaimState.WAITING
+    assert waiting.state is ClaimState.APPROVED_WITH_CONSTRAINTS
 
     clock.advance(61)
     state = controller.get_claim_state("team/project", "claim-2")
 
-    assert state["state"] == "approved_with_constraints"
-    assert "path-overlap wait cycle" in state["decision"]["reason"]
+    assert state["state"] == "approved"
 
 
 def test_start_execution_and_complete_claim_are_idempotent() -> None:
@@ -171,16 +169,15 @@ async def test_mcp_exposes_report_progress_tool() -> None:
     assert "report_progress" in {tool.name for tool in tools}
 
 
-def test_m_cannot_submit_needs_human_even_when_alignment_is_disabled() -> None:
+def test_needs_human_disabled_maps_m_submission_to_approved() -> None:
     controller = make_controller(allow_needs_human=False)
     record = controller.submit_claim(make_claim("claim-1", ("src/api/**",)))
-    assert record.state is ClaimState.ASSESSING
+    assert record.state is ClaimState.APPROVED
 
-    with pytest.raises(ValueError, match="M cannot move"):
-        controller.submit_coordination_decision(
-            "team/project",
-            "claim-1",
-            Decision(ClaimState.NEEDS_HUMAN, "M cannot decide reliably"),
+    controller.start_execution("team/project", "claim-1")
+    with pytest.raises(ValueError, match="disabled"):
+        controller.request_requirements_clarification(
+            "team/project", "claim-1", "Which behavior is intended?"
         )
 
 
@@ -194,26 +191,22 @@ def test_needs_human_disabled_cycle_breaks_deterministically() -> None:
     )
     controller.submit_claim(make_claim("claim-2", ("src/x/**",)))
     waiting = controller.submit_claim(make_claim("claim-1", ("src/x/**",)))
-    assert waiting.state is ClaimState.WAITING
+    assert waiting.state is ClaimState.APPROVED_WITH_CONSTRAINTS
 
     clock.advance(61)
     state = controller.get_claim_state("team/project", "claim-2")
 
-    assert state["state"] == "approved_with_constraints"
-    assert "path-overlap wait cycle" in state["decision"]["reason"]
-    assert "declared planned_paths" in state["decision"]["constraints"][0]
+    assert state["state"] == "approved"
 
 
-def test_claim_author_requests_requirements_alignment() -> None:
+def test_needs_human_enabled_keeps_human_escalation() -> None:
     controller = make_controller()
     record = controller.submit_claim(make_claim("claim-1", ("src/api/**",)))
-    assert record.state is ClaimState.ASSESSING
+    assert record.state is ClaimState.APPROVED
 
-    controller.request_requirements_alignment(
-        "team/project",
-        "claim-1",
-        record.claim.author,
-        "the acceptance criterion is ambiguous",
+    controller.start_execution("team/project", "claim-1")
+    controller.request_requirements_clarification(
+        "team/project", "claim-1", "Which behavior is intended?"
     )
 
     state = controller.get_claim_state("team/project", "claim-1")

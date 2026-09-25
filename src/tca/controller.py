@@ -8,7 +8,11 @@ from .domain import (
     ClaimRecord,
     ClaimState,
     CoordinationTask,
+    DependencyMode,
     Decision,
+    Handoff,
+    CoordinationAdvice,
+    SubgoalEvent,
     allowed_actions,
 )
 from .rules import BasicRuleChecker
@@ -244,6 +248,32 @@ class Controller:
         )
         return self._assess_or_queue(claim, context)
 
+    def publish_handoff(
+        self, project_id: str, claim_id: str, handoff: Handoff
+    ) -> ClaimRecord:
+        """Publish an immutable interface checkpoint while still executing.
+
+        Publishing never marks the owner complete: it releases successors to
+        work against a stable contract while the owner finishes independent
+        implementation.  The recorded commit preserves authorship in the
+        final Git history.
+        """
+        self.run_deadline_checks(project_id)
+        record = self.store.get(project_id, claim_id)
+        if record.state is not ClaimState.EXECUTING:
+            raise ValueError("handoff can only be published by an executing claim")
+        if handoff.claim_id != claim_id:
+            raise ValueError("handoff claim_id must match the publishing claim")
+        owned = set(record.claim.owned_symbols)
+        if owned and not set(handoff.exported_symbols).issubset(owned):
+            raise ValueError("handoff exported_symbols must be owned by the publisher")
+        if owned and not set(handoff.transferable_symbols).issubset(owned):
+            raise ValueError("transferable_symbols must be owned by the publisher")
+        self.store.publish_handoff(project_id, claim_id, handoff, self._now_iso())
+        published = self.store.get(project_id, claim_id)
+        self._reevaluate_interface_waiters(published)
+        return published
+
     def get_claim_state(self, project_id: str, claim_id: str) -> dict[str, object]:
         self.run_deadline_checks(project_id)
         record = self.store.get(project_id, claim_id)
@@ -263,7 +293,6 @@ class Controller:
             raise ValueError(
                 f"illegal transition for {claim_id}: {record.state.value} -> executing"
             )
-        self._require_group_boundary(record)
         record = self.store.transition(
             project_id,
             claim_id,
@@ -272,38 +301,6 @@ class Controller:
         )
         self.store.record_execution_start(project_id, claim_id, self._now_iso())
         return record
-
-    def _require_group_boundary(self, record: ClaimRecord) -> None:
-        """Gate a team until every member accepts one boundary contract."""
-        claim = record.claim
-        if claim.expected_group_size == 1:
-            return
-        contract = record.decision.boundary_contract if record.decision else ""
-        if not contract:
-            raise ValueError("coordinated claim requires a boundary_contract")
-        peers = [
-            item
-            for item in self.store.list_active(claim.project_id)
-            if item.claim.coordination_group == claim.coordination_group
-        ]
-        if len(peers) != claim.expected_group_size:
-            raise ValueError(
-                "waiting for all claims in coordination_group "
-                f"{claim.coordination_group!r}"
-            )
-        eligible = {
-            ClaimState.APPROVED,
-            ClaimState.APPROVED_WITH_CONSTRAINTS,
-            ClaimState.EXECUTING,
-        }
-        if any(item.state not in eligible for item in peers):
-            raise ValueError("waiting for every group member to receive a boundary decision")
-        contracts = {
-            item.decision.boundary_contract if item.decision else ""
-            for item in peers
-        }
-        if contracts != {contract}:
-            raise ValueError("coordination group boundary_contracts do not match")
 
     def complete_claim(self, project_id: str, claim_id: str) -> ClaimRecord:
         self.run_deadline_checks(project_id)
@@ -332,6 +329,75 @@ class Controller:
             )
             record = self.store.get(project_id, claim_id)
         return record
+
+    def request_requirements_clarification(
+        self,
+        project_id: str,
+        claim_id: str,
+        question: str,
+        context: str = "",
+    ) -> ClaimRecord:
+        """Pause only an ambiguous product decision for its owning P.
+
+        This is deliberately not an escalation route for Git conflicts,
+        rebases, or implementation uncertainty: those remain the executing
+        A's responsibility.  The persisted payload is natural language only;
+        no patch or private worktree content is accepted by TCA.
+        """
+        self.run_deadline_checks(project_id)
+        if not self.allow_needs_human:
+            raise ValueError("requirements clarification is disabled on this server")
+        question = question.strip()
+        if not question:
+            raise ValueError("requirements clarification requires a question")
+        record = self.store.get(project_id, claim_id)
+        if record.state is not ClaimState.EXECUTING:
+            raise ValueError(
+                "requirements clarification may only pause an executing claim"
+            )
+        note = f"requirements question: {question}"
+        if context.strip():
+            note += f"\ncontext: {context.strip()}"
+        return self.store.transition(
+            project_id,
+            claim_id,
+            {ClaimState.EXECUTING},
+            ClaimState.NEEDS_HUMAN,
+            decision=Decision(
+                ClaimState.NEEDS_HUMAN,
+                note,
+                conflicts_with=(),
+            ),
+        )
+
+    def record_subgoal_event(self, event: SubgoalEvent) -> SubgoalEvent:
+        """Persist one coarse start/finish/integration event from the owning A."""
+        self.run_deadline_checks(event.project_id)
+        record = self.store.get(event.project_id, event.claim_id)
+        if record.claim.author != event.author:
+            raise ValueError("subgoal event author must own the claim")
+        if record.state is not ClaimState.EXECUTING:
+            raise ValueError("subgoal events require an executing claim")
+        return self.store.record_subgoal_event(event)
+
+    def get_integration_context(self, project_id: str, claim_id: str) -> dict[str, object]:
+        """Give the later integrator only relevant public coordination context."""
+        record = self.store.get(project_id, claim_id)
+        return {
+            "claim": record.to_mapping(),
+            "related_claims": [item.to_mapping() for item in self.store.list_coordination_context(project_id, exclude=claim_id)],
+            "subgoal_events": [item.to_mapping() for item in self.store.list_subgoal_events(project_id)],
+            "advice": [item.to_mapping() for item in self.store.list_coordination_advice(project_id, claim_id)],
+            "instruction": "Rebase onto relevant newer work and resolve code, API, and Git conflicts yourself. Escalate only product-requirements ambiguity.",
+        }
+
+    def publish_coordination_advice(self, advice: CoordinationAdvice) -> CoordinationAdvice:
+        """M publishes non-blocking natural-language advice for one owning A."""
+        self.run_deadline_checks(advice.project_id)
+        self.store.get(advice.project_id, advice.claim_id)
+        if not advice.message.strip():
+            raise ValueError("coordination advice requires a message")
+        return self.store.publish_coordination_advice(advice)
 
     def integrate_claim(self, project_id: str, claim_id: str) -> ClaimRecord:
         self.run_deadline_checks(project_id)
@@ -379,9 +445,14 @@ class Controller:
             return None
         task_project_id, claim_id = claim_key
         record = self.store.get(task_project_id, claim_id)
-        if record.state is not ClaimState.ASSESSING:
+        if record.state not in {
+            ClaimState.ASSESSING,
+            ClaimState.APPROVED,
+            ClaimState.APPROVED_WITH_CONSTRAINTS,
+            ClaimState.EXECUTING,
+        }:
             raise ValueError(
-                f"claim {task_project_id}:{claim_id} is no longer awaiting coordination"
+                f"claim {task_project_id}:{claim_id} is no longer coordination-active"
             )
         context = self.store.list_coordination_context(
             record.claim.project_id, exclude=record.claim.claim_id
@@ -402,10 +473,30 @@ class Controller:
         worker_id: str | None = None,
     ) -> ClaimRecord:
         self.run_deadline_checks(project_id)
+        if decision.state is ClaimState.NEEDS_HUMAN and not self.allow_needs_human:
+            record = self.store.get(project_id, claim_id)
+            active = self.store.list_active(project_id, exclude=claim_id)
+            hard = self.rule_checker.check(record.claim, active)
+            if hard is None:
+                decision = Decision(
+                    state=(
+                        ClaimState.APPROVED_WITH_CONSTRAINTS
+                        if decision.constraints
+                        else ClaimState.APPROVED
+                    ),
+                    reason=(
+                        "needs_human is disabled on this server; C resolved "
+                        "the claim deterministically"
+                    ),
+                    constraints=decision.constraints,
+                )
+            else:
+                decision = hard
         allowed_states = {
             ClaimState.APPROVED,
             ClaimState.APPROVED_WITH_CONSTRAINTS,
             ClaimState.WAITING,
+            ClaimState.NEEDS_HUMAN,
             ClaimState.BLOCKED,
         }
         if decision.state not in allowed_states:
@@ -414,66 +505,41 @@ class Controller:
             self.store.validate_coordination_lease(
                 project_id, claim_id, worker_id, now=self._now_iso()
             )
-        previous = self.store.get(project_id, claim_id)
-        record = self.store.transition(
-            project_id,
-            claim_id,
-            # A pre-existing path-only waiter may belong to a coordinated
-            # pair. M must be able to replace that provisional WAITING state
-            # with the pair's joint decision and boundary contract.
-            {ClaimState.ASSESSING, ClaimState.WAITING},
-            decision.state,
-            decision=decision,
-        )
-        # WAITING claims created by the deterministic path checker have no
-        # coordination queue entry. A manual M repair is still valid, but
-        # there is no task to mark complete in that legacy state.
-        if previous.state is ClaimState.ASSESSING:
-            self.store.complete_coordination(project_id, claim_id, worker_id=worker_id)
-        return record
-
-    def request_requirements_alignment(
-        self, project_id: str, claim_id: str, requester: str, reason: str
-    ) -> ClaimRecord:
-        """Let the owning A pause for requirements alignment when ambiguity appears."""
-        self.run_deadline_checks(project_id)
-        record = self.store.get(project_id, claim_id)
-        if requester != record.claim.author:
-            raise ValueError("only the Claim author may request requirements alignment")
-        requestable = {
-            ClaimState.ASSESSING,
-            ClaimState.WAITING,
+        current = self.store.get(project_id, claim_id)
+        if current.state in {
             ClaimState.APPROVED,
             ClaimState.APPROVED_WITH_CONSTRAINTS,
             ClaimState.EXECUTING,
-        }
-        if record.state not in requestable:
-            raise ValueError(
-                f"Claim {claim_id} cannot request requirements alignment from {record.state.value}"
+        }:
+            if decision.state not in {
+                ClaimState.APPROVED,
+                ClaimState.APPROVED_WITH_CONSTRAINTS,
+            }:
+                raise ValueError(
+                    "M may not block an already-running asynchronous claim; "
+                    "only the owning A may request requirements clarification"
+                )
+            self.store.complete_coordination(
+                project_id, claim_id, worker_id=worker_id
             )
-        decision = Decision(
-            state=ClaimState.NEEDS_HUMAN,
-            reason=f"A requested requirements alignment: {reason}",
-        )
-        transitioned = self.store.transition(
+            return current
+        record = self.store.transition(
             project_id,
             claim_id,
-            {record.state},
-            ClaimState.NEEDS_HUMAN,
+            {ClaimState.ASSESSING},
+            decision.state,
             decision=decision,
         )
-        if record.state is ClaimState.ASSESSING:
-            self.store.complete_coordination(project_id, claim_id)
-        return transitioned
+        self.store.complete_coordination(project_id, claim_id, worker_id=worker_id)
+        return record
 
     def resolve_privileged_review(
         self, project_id: str, claim_id: str, decision: Decision
     ) -> ClaimRecord:
-        """Apply a bounded requirements-alignment resolution after A escalation.
+        """Record a human P's natural-language alignment outcome.
 
-        P's private patch context never enters the store.  Only the resulting
-        constraints, requirements and calibrated uncertainty are persisted for
-        the owning A to follow.
+        The server never receives or reads a patch. Only the resulting minimal
+        constraints and requirements for the owning A are persisted.
         """
         allowed_states = {
             ClaimState.APPROVED,
@@ -495,10 +561,7 @@ class Controller:
                 wait_for=decision.wait_for,
                 conflicts_with=decision.conflicts_with,
                 uncertainty=decision.uncertainty,
-                alignment_owner=decision.alignment_owner,
-                alignment_compatibility=decision.alignment_compatibility,
-                alignment_acceptance=decision.alignment_acceptance,
-                alignment_split=decision.alignment_split,
+                boundary_contract=decision.boundary_contract,
             )
         return self.store.transition(
             project_id,
@@ -511,8 +574,53 @@ class Controller:
     def _assess_or_queue(
         self, claim: Claim, active: list[ClaimRecord]
     ) -> ClaimRecord:
-        hard_decision = self.rule_checker.check(claim, active)
+        interface_decision, ignored_claims = self._interface_handoff_decision(
+            claim, active
+        )
+        if interface_decision is not None and interface_decision.state in {
+            ClaimState.WAITING,
+            ClaimState.NEEDS_HUMAN,
+        }:
+            return self.store.transition(
+                claim.project_id,
+                claim.claim_id,
+                {ClaimState.ASSESSING},
+                interface_decision.state,
+                decision=interface_decision,
+            )
+        scoped_active = [
+            record for record in active if record.claim.claim_id not in ignored_claims
+        ]
+        hard_decision = self.rule_checker.check(claim, scoped_active)
         if hard_decision is not None:
+            # A path overlap is a coordination signal, not a reason to make
+            # every participant wait for M or for all peers to arrive.  The
+            # later integrator owns rebase/merge resolution; C only records
+            # conservative scope constraints.  Explicit interface dependencies
+            # above remain the one intentional waiting case.
+            if hard_decision.state is ClaimState.WAITING:
+                constraints = tuple(
+                    dict.fromkeys(
+                        (
+                            *hard_decision.constraints,
+                            "Proceed on your declared responsibility boundary; "
+                            "before completion, rebase onto newer related work "
+                            "and resolve any implementation or Git conflicts yourself.",
+                        )
+                    )
+                )
+                return self.store.transition(
+                    claim.project_id,
+                    claim.claim_id,
+                    {ClaimState.ASSESSING},
+                    ClaimState.APPROVED_WITH_CONSTRAINTS,
+                    decision=Decision(
+                        ClaimState.APPROVED_WITH_CONSTRAINTS,
+                        "potential shared boundary detected; parallel execution is allowed",
+                        constraints=constraints,
+                        conflicts_with=hard_decision.conflicts_with,
+                    ),
+                )
             return self.store.transition(
                 claim.project_id,
                 claim.claim_id,
@@ -520,10 +628,113 @@ class Controller:
                 hard_decision.state,
                 decision=hard_decision,
             )
+        if interface_decision is not None:
+            return self.store.transition(
+                claim.project_id,
+                claim.claim_id,
+                {ClaimState.ASSESSING},
+                interface_decision.state,
+                decision=interface_decision,
+            )
+        # Normal independent work does not wait for an M approval.  Queue a
+        # read/advise task after approval so M can still observe the changing
+        # project state without becoming the critical path.
+        record = self.store.transition(
+            claim.project_id,
+            claim.claim_id,
+            {ClaimState.ASSESSING},
+            ClaimState.APPROVED,
+            decision=Decision(
+                ClaimState.APPROVED,
+                "no explicit interface dependency or shared boundary requires waiting",
+            ),
+        )
         self.store.queue_coordination(
             claim.project_id, claim.claim_id, now=self._now_iso()
         )
-        return self.store.get(claim.project_id, claim.claim_id)
+        return record
+
+    def _interface_handoff_decision(
+        self, claim: Claim, context: list[ClaimRecord]
+    ) -> tuple[Decision | None, set[str]]:
+        """Resolve interface-first dependencies without forcing idle waits."""
+        if claim.dependency_mode is not DependencyMode.AFTER_INTERFACE:
+            return None, set()
+        by_id = {record.claim.claim_id: record for record in context}
+        missing: list[str] = []
+        handoffs: list[Handoff] = []
+        for predecessor_id in claim.handoff_from:
+            predecessor = by_id.get(predecessor_id)
+            if predecessor is None or predecessor.handoff is None:
+                missing.append(predecessor_id)
+            else:
+                handoffs.append(predecessor.handoff)
+        if missing:
+            return (
+                Decision(
+                    state=ClaimState.WAITING,
+                    reason="waiting for interface handoff",
+                    wait_for=tuple(missing),
+                ),
+                set(),
+            )
+        transferable = {
+            symbol for handoff in handoffs for symbol in handoff.transferable_symbols
+        }
+        requested = set(claim.takes_over_symbols)
+        if not requested.issubset(transferable):
+            return (
+                Decision(
+                    state=ClaimState.NEEDS_HUMAN,
+                    reason=(
+                        "ownership transfer requested without predecessor approval: "
+                        + ", ".join(sorted(requested - transferable))
+                    ),
+                    conflicts_with=claim.handoff_from,
+                ),
+                set(),
+            )
+        constraints = tuple(
+            "Rebase onto {commit} from {claim_id}; preserve its behavior contracts: {contracts}".format(
+                commit=handoff.commit,
+                claim_id=handoff.claim_id,
+                contracts="; ".join(handoff.behavior_contracts),
+            )
+            for handoff in handoffs
+        )
+        if requested:
+            constraints += (
+                "Ownership transfer approved for: " + ", ".join(sorted(requested)),
+            )
+        return (
+            Decision(
+                state=ClaimState.APPROVED_WITH_CONSTRAINTS,
+                reason="required interface handoff is published; successor may proceed",
+                constraints=constraints,
+                conflicts_with=claim.handoff_from,
+            ),
+            set(claim.handoff_from),
+        )
+
+    def _reevaluate_interface_waiters(self, trigger: ClaimRecord) -> None:
+        for record in self.store.list_active(trigger.claim.project_id):
+            if (
+                record.state is not ClaimState.WAITING
+                or record.decision is None
+                or record.decision.reason != "waiting for interface handoff"
+                or trigger.claim.claim_id not in record.decision.wait_for
+            ):
+                continue
+            self.store.transition(
+                record.claim.project_id,
+                record.claim.claim_id,
+                {ClaimState.WAITING},
+                ClaimState.ASSESSING,
+            )
+            context = self.store.list_coordination_context(
+                record.claim.project_id, exclude=record.claim.claim_id
+            )
+            self._assess_or_queue(record.claim, context)
 
     def _reevaluate_waiters(self, trigger: ClaimRecord) -> None:
         active = self.store.list_active(

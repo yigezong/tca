@@ -13,6 +13,10 @@ from .domain import (
     ClaimRecord,
     ClaimState,
     Decision,
+    Handoff,
+    CoordinationAdvice,
+    SubgoalEvent,
+    SubgoalEventType,
 )
 
 
@@ -32,6 +36,14 @@ class ClaimStore:
     def _ensure_schema(self) -> None:
         self._ensure_claims_table()
         self._ensure_coordination_tasks_table()
+        self._connection.execute("""CREATE TABLE IF NOT EXISTS subgoal_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT NOT NULL,
+            claim_id TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL)""")
+        self._connection.execute("""CREATE TABLE IF NOT EXISTS coordination_advice (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT NOT NULL,
+            claim_id TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL)""")
+        self._connection.execute("CREATE INDEX IF NOT EXISTS subgoal_events_project_claim ON subgoal_events(project_id, claim_id, id)")
+        self._connection.execute("CREATE INDEX IF NOT EXISTS coordination_advice_project_claim ON coordination_advice(project_id, claim_id, id)")
         self._connection.execute("DROP INDEX IF EXISTS claims_project_state")
         self._connection.execute(
             "CREATE INDEX claims_project_state ON claims(project_id, state)"
@@ -66,7 +78,7 @@ class ClaimStore:
             str(row["name"])
             for row in self._connection.execute("PRAGMA table_info(claims)")
         }
-        for name in ("executing_since", "last_heartbeat", "progress"):
+        for name in ("executing_since", "last_heartbeat", "progress", "handoff"):
             if name not in existing:
                 self._connection.execute(
                     f"ALTER TABLE claims ADD COLUMN {name} TEXT"
@@ -135,6 +147,7 @@ class ClaimStore:
                 executing_since TEXT,
                 last_heartbeat TEXT,
                 progress TEXT,
+                handoff TEXT,
                 PRIMARY KEY (project_id, claim_id)
             )"""
         )
@@ -441,6 +454,25 @@ class ClaimStore:
             if cursor.rowcount != 1:
                 raise KeyError(f"{project_id}:{claim_id}")
 
+    def publish_handoff(
+        self, project_id: str, claim_id: str, handoff: Handoff, ts: str
+    ) -> None:
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                "SELECT handoff FROM claims WHERE project_id = ? AND claim_id = ?",
+                (project_id, claim_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"{project_id}:{claim_id}")
+            encoded = json.dumps(handoff.to_mapping())
+            if row["handoff"] and row["handoff"] != encoded:
+                raise ValueError("handoff is immutable once published")
+            self._connection.execute(
+                """UPDATE claims SET handoff = ?, last_heartbeat = ?, updated_at = ?
+                WHERE project_id = ? AND claim_id = ?""",
+                (encoded, ts, _now(), project_id, claim_id),
+            )
+
     def coordination_created_at(
         self, project_id: str, claim_id: str
     ) -> str | None:
@@ -464,9 +496,37 @@ class ClaimStore:
             ).fetchall()
         return [self._decode(row) for row in rows]
 
+    def record_subgoal_event(self, event: SubgoalEvent) -> SubgoalEvent:
+        created = event.created_at or _now()
+        with self._lock, self._connection:
+            self._connection.execute("INSERT INTO subgoal_events(project_id, claim_id, payload, created_at) VALUES (?, ?, ?, ?)", (event.project_id, event.claim_id, json.dumps(event.to_mapping()), created))
+        return SubgoalEvent.from_mapping({**event.to_mapping(), "created_at": created})
+
+    def list_subgoal_events(self, project_id: str, claim_id: str | None = None) -> list[SubgoalEvent]:
+        query = "SELECT payload, created_at FROM subgoal_events WHERE project_id = ?"
+        args: list[object] = [project_id]
+        if claim_id:
+            query += " AND claim_id = ?"; args.append(claim_id)
+        query += " ORDER BY id"
+        with self._lock:
+            rows = self._connection.execute(query, args).fetchall()
+        return [SubgoalEvent.from_mapping({**json.loads(row["payload"]), "created_at": row["created_at"]}) for row in rows]
+
+    def publish_coordination_advice(self, advice: CoordinationAdvice) -> CoordinationAdvice:
+        created = advice.created_at or _now()
+        with self._lock, self._connection:
+            self._connection.execute("INSERT INTO coordination_advice(project_id, claim_id, payload, created_at) VALUES (?, ?, ?, ?)", (advice.project_id, advice.claim_id, json.dumps(advice.to_mapping()), created))
+        return CoordinationAdvice.from_mapping({**advice.to_mapping(), "created_at": created})
+
+    def list_coordination_advice(self, project_id: str, claim_id: str) -> list[CoordinationAdvice]:
+        with self._lock:
+            rows = self._connection.execute("SELECT payload, created_at FROM coordination_advice WHERE project_id = ? AND claim_id = ? ORDER BY id", (project_id, claim_id)).fetchall()
+        return [CoordinationAdvice.from_mapping({**json.loads(row["payload"]), "created_at": row["created_at"]}) for row in rows]
+
     @staticmethod
     def _decode(row: sqlite3.Row) -> ClaimRecord:
         decision = json.loads(row["decision"]) if row["decision"] else None
+        handoff = json.loads(row["handoff"]) if row["handoff"] else None
         return ClaimRecord(
             claim=Claim.from_mapping(json.loads(row["payload"])),
             state=ClaimState(row["state"]),
@@ -476,6 +536,7 @@ class ClaimStore:
             executing_since=row["executing_since"] or "",
             last_heartbeat=row["last_heartbeat"] or "",
             progress=row["progress"] or "",
+            handoff=Handoff.from_mapping(handoff) if handoff else None,
         )
 
 
@@ -488,4 +549,4 @@ def build_store():
         from .postgres_store import PostgresClaimStore
 
         return PostgresClaimStore(database_url)
-    return ClaimStore(Path("tca.db"))
+    return ClaimStore(Path(os.getenv("TCA_DATABASE_PATH", "tca.db")))

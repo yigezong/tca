@@ -1,5 +1,8 @@
 from tca.controller import Controller
-from tca.domain import Claim, ClaimState, Decision
+from tca.domain import (
+    Claim, ClaimState, CoordinationAdvice, Decision, DependencyMode, Handoff,
+    SubgoalEvent, SubgoalEventType,
+)
 from tca.rules import BasicRuleChecker
 from tca.store import ClaimStore
 
@@ -13,6 +16,10 @@ def make_claim(
     project_id: str = "team/project",
     version: int = 1,
     dependencies: tuple[str, ...] = (),
+    owned_symbols: tuple[str, ...] = (),
+    dependency_mode: DependencyMode = DependencyMode.PARALLEL,
+    handoff_from: tuple[str, ...] = (),
+    takes_over_symbols: tuple[str, ...] = (),
     coordination_group: str = "",
     expected_group_size: int = 1,
 ) -> Claim:
@@ -25,6 +32,10 @@ def make_claim(
         goal=f"implement {claim_id}",
         planned_paths=paths,
         dependencies=dependencies,
+        owned_symbols=owned_symbols,
+        dependency_mode=dependency_mode,
+        handoff_from=handoff_from,
+        takes_over_symbols=takes_over_symbols,
         coordination_group=coordination_group,
         expected_group_size=expected_group_size,
         version=version,
@@ -45,14 +56,14 @@ def approve_claim(
     )
 
 
-def test_claim_without_hard_conflicts_is_queued_for_m() -> None:
+def test_independent_claim_is_immediately_approved_without_m_gate() -> None:
     controller = make_controller()
 
     record = controller.submit_claim(make_claim("claim-1", ("src/login/**",)))
 
-    assert record.state is ClaimState.ASSESSING
+    assert record.state is ClaimState.APPROVED
     state = controller.get_claim_state("team/project", "claim-1")
-    assert state["allowed_actions"] == ["get_claim_state"]
+    assert state["allowed_actions"] == ["start_execution"]
     task = controller.get_coordination_task("team/project")
     assert task is not None
     assert task.claim.claim.claim_id == "claim-1"
@@ -82,91 +93,12 @@ def test_leased_coordination_task_only_accepts_its_worker_decision() -> None:
     assert decided.state is ClaimState.APPROVED
 
 
-def test_grouped_claims_require_one_shared_boundary_contract() -> None:
-    controller = make_controller()
-    first = controller.submit_claim(
-        make_claim(
-            "a1", ("src/a.py",), coordination_group="pair-1", expected_group_size=2
-        )
-    )
-    controller.submit_coordination_decision(
-        "team/project",
-        "a1",
-        Decision(ClaimState.APPROVED, "first", boundary_contract="pair-1"),
-    )
-    with pytest.raises(ValueError, match="waiting for all claims"):
-        controller.start_execution("team/project", "a1")
-
-    second = controller.submit_claim(
-        make_claim(
-            "a2", ("src/b.py",), coordination_group="pair-1", expected_group_size=2
-        )
-    )
-    controller.submit_coordination_decision(
-        "team/project",
-        "a2",
-        Decision(ClaimState.APPROVED, "second", boundary_contract="pair-1"),
-    )
-    controller.start_execution("team/project", first.claim.claim_id)
-    assert controller.store.get("team/project", "a1").state is ClaimState.EXECUTING
-
-
-def test_grouped_claims_reject_mismatched_boundary_contracts() -> None:
-    controller = make_controller()
-    for claim_id, path in (("a1", "src/a.py"), ("a2", "src/b.py")):
-        controller.submit_claim(
-            make_claim(
-                claim_id, (path,), coordination_group="pair-1", expected_group_size=2
-            )
-        )
-    controller.submit_coordination_decision(
-        "team/project", "a1", Decision(ClaimState.APPROVED, "first", boundary_contract="one")
-    )
-    controller.submit_coordination_decision(
-        "team/project", "a2", Decision(ClaimState.APPROVED, "second", boundary_contract="two")
-    )
-    with pytest.raises(ValueError, match="boundary_contracts do not match"):
-        controller.start_execution("team/project", "a1")
-
-
-def test_grouped_overlapping_claims_remain_assessing_for_m() -> None:
-    controller = make_controller()
-    controller.submit_claim(
-        make_claim(
-            "a1", ("src/shared.py",), coordination_group="pair-1", expected_group_size=2
-        )
-    )
-    second = controller.submit_claim(
-        make_claim(
-            "a2", ("src/shared.py",), coordination_group="pair-1", expected_group_size=2
-        )
-    )
-
-    assert second.state is ClaimState.ASSESSING
-
-
-def test_m_can_replace_provisional_waiting_with_group_decision() -> None:
-    controller = make_controller()
-    controller.submit_claim(make_claim("a1", ("src/shared.py",)))
-    waiting = controller.submit_claim(make_claim("a2", ("src/shared.py",)))
-    assert waiting.state is ClaimState.WAITING
-
-    decided = controller.submit_coordination_decision(
-        "team/project",
-        "a2",
-        Decision(ClaimState.APPROVED_WITH_CONSTRAINTS, "pair decision", boundary_contract="pair-1"),
-    )
-    assert decided.state is ClaimState.APPROVED_WITH_CONSTRAINTS
-
-
 def test_privileged_review_resolves_needs_human_with_calibrated_uncertainty() -> None:
     controller = make_controller()
     claim = controller.submit_claim(make_claim("claim-1", ("src/login/**",)))
-    controller.request_requirements_alignment(
-        "team/project",
-        claim.claim.claim_id,
-        claim.claim.author,
-        "the public default is ambiguous",
+    controller.start_execution(claim.claim.project_id, claim.claim.claim_id)
+    controller.request_requirements_clarification(
+        "team/project", "claim-1", "Which shared default behavior is intended?"
     )
 
     resolved = controller.resolve_privileged_review(
@@ -186,61 +118,6 @@ def test_privileged_review_resolves_needs_human_with_calibrated_uncertainty() ->
     assert resolved.decision.uncertainty == 0.8
 
 
-def test_m_cannot_escalate_to_needs_human_but_owner_can_request_alignment() -> None:
-    controller = make_controller()
-    claim = controller.submit_claim(make_claim("claim-1", ("src/login/**",)))
-
-    with pytest.raises(ValueError, match="M cannot move"):
-        controller.submit_coordination_decision(
-            claim.claim.project_id,
-            claim.claim.claim_id,
-            Decision(ClaimState.NEEDS_HUMAN, "M cannot own requirement alignment"),
-        )
-
-    with pytest.raises(ValueError, match="only the Claim author"):
-        controller.request_requirements_alignment(
-            claim.claim.project_id,
-            claim.claim.claim_id,
-            "agent-other",
-            "consumer contract is underspecified",
-        )
-
-    aligned = controller.request_requirements_alignment(
-        claim.claim.project_id,
-        claim.claim.claim_id,
-        claim.claim.author,
-        "consumer contract is underspecified",
-    )
-    assert aligned.state is ClaimState.NEEDS_HUMAN
-    assert aligned.decision is not None
-    assert aligned.decision.reason.startswith("A requested requirements alignment:")
-
-
-def test_owner_can_pause_execution_for_requirements_alignment_and_resume() -> None:
-    controller = make_controller()
-    claim = controller.submit_claim(make_claim("claim-1", ("src/login/**",)))
-    approve_claim(controller, claim.claim.claim_id)
-    controller.start_execution(claim.claim.project_id, claim.claim.claim_id)
-
-    aligned = controller.request_requirements_alignment(
-        claim.claim.project_id,
-        claim.claim.claim_id,
-        claim.claim.author,
-        "the positional argument semantics are ambiguous",
-    )
-    assert aligned.state is ClaimState.NEEDS_HUMAN
-
-    resolved = controller.resolve_privileged_review(
-        claim.claim.project_id,
-        claim.claim.claim_id,
-        Decision(ClaimState.APPROVED_WITH_CONSTRAINTS, "P clarified the interface"),
-    )
-    assert resolved.state is ClaimState.APPROVED_WITH_CONSTRAINTS
-
-    resumed = controller.start_execution(claim.claim.project_id, claim.claim.claim_id)
-    assert resumed.state is ClaimState.EXECUTING
-
-
 def test_privileged_review_only_resolves_needs_human() -> None:
     controller = make_controller()
     controller.submit_claim(make_claim("claim-1", ("src/login/**",)))
@@ -253,6 +130,182 @@ def test_privileged_review_only_resolves_needs_human() -> None:
         )
 
 
+def test_grouped_claims_can_start_asynchronously() -> None:
+    controller = make_controller()
+    first = controller.submit_claim(
+        make_claim(
+            "a1", ("src/a.py",), coordination_group="pair-1", expected_group_size=2
+        )
+    )
+    assert first.state is ClaimState.APPROVED
+    controller.start_execution("team/project", "a1")
+    assert controller.store.get("team/project", "a1").state is ClaimState.EXECUTING
+
+    second = controller.submit_claim(
+        make_claim(
+            "a2", ("src/b.py",), coordination_group="pair-1", expected_group_size=2
+        )
+    )
+    assert second.state is ClaimState.APPROVED
+    controller.start_execution("team/project", second.claim.claim_id)
+    assert controller.store.get("team/project", "a2").state is ClaimState.EXECUTING
+
+
+def test_grouped_claims_do_not_require_a_shared_boundary_contract_to_start() -> None:
+    controller = make_controller()
+    for claim_id, path in (("a1", "src/a.py"), ("a2", "src/b.py")):
+        controller.submit_claim(
+            make_claim(
+                claim_id, (path,), coordination_group="pair-1", expected_group_size=2
+            )
+        )
+    controller.start_execution("team/project", "a1")
+    controller.start_execution("team/project", "a2")
+    assert controller.store.get("team/project", "a1").state is ClaimState.EXECUTING
+    assert controller.store.get("team/project", "a2").state is ClaimState.EXECUTING
+
+
+def test_overlapping_claims_receive_constraints_but_remain_parallel() -> None:
+    controller = make_controller()
+    first = controller.submit_claim(make_claim("a1", ("src/shared.py",)))
+    second = controller.submit_claim(make_claim("a2", ("src/shared.py",)))
+
+    assert first.state is ClaimState.APPROVED
+    assert second.state is ClaimState.APPROVED_WITH_CONSTRAINTS
+    assert second.decision is not None
+    assert "resolve any implementation or Git conflicts yourself" in second.decision.constraints[-1]
+    controller.start_execution("team/project", "a2")
+
+
+def test_executing_agent_can_request_requirements_clarification_only() -> None:
+    controller = make_controller()
+    claim = controller.submit_claim(make_claim("a1", ("src/url.py",)))
+    controller.start_execution(claim.claim.project_id, claim.claim.claim_id)
+
+    paused = controller.request_requirements_clarification(
+        "team/project",
+        "a1",
+        "Should domain match hostname or full netloc?",
+        "Ports change the observable result.",
+    )
+
+    assert paused.state is ClaimState.NEEDS_HUMAN
+    assert paused.decision is not None
+    assert "requirements question" in paused.decision.reason
+    with pytest.raises(ValueError, match="executing claim"):
+        controller.request_requirements_clarification(
+            "team/project", "a1", "Is this a second question?"
+        )
+
+
+def test_subgoal_events_and_nonblocking_m_advice_reach_later_integrator() -> None:
+    controller = make_controller()
+    first = controller.submit_claim(make_claim("a1", ("src/url.py",)))
+    second = controller.submit_claim(make_claim("a2", ("src/url.py",)))
+    controller.start_execution("team/project", "a1")
+    controller.start_execution("team/project", "a2")
+
+    event = controller.record_subgoal_event(
+        SubgoalEvent(
+            project_id="team/project", claim_id="a1", subgoal_id="a1-api",
+            author="agent-a1", event_type=SubgoalEventType.STARTED,
+            goal="define the public URL-validator interface", planned_paths=("src/url.py",),
+        )
+    )
+    advice = controller.publish_coordination_advice(
+        CoordinationAdvice(
+            project_id="team/project", claim_id="a2", advisor="agent-m",
+            message="Preserve A1's public constructor shape; rebase before finishing.",
+            related_subgoals=(event.subgoal_id,),
+        )
+    )
+
+    context = controller.get_integration_context("team/project", "a2")
+    assert context["subgoal_events"][0]["subgoal_id"] == "a1-api"
+    assert context["advice"][0]["message"] == advice.message
+    assert "resolve code, API, and Git conflicts yourself" in context["instruction"]
+
+
+def test_interface_handoff_releases_successor_before_owner_completes() -> None:
+    controller = make_controller()
+    first = controller.submit_claim(
+        make_claim(
+            "a1",
+            ("src/editor/**",),
+            owned_symbols=("Editor.launch",),
+        )
+    )
+    approve_claim(controller, first.claim.claim_id)
+    controller.start_execution(first.claim.project_id, first.claim.claim_id)
+
+    second = controller.submit_claim(
+        make_claim(
+            "a2",
+            ("src/cli/**",),
+            owned_symbols=("Cli.open",),
+            dependency_mode=DependencyMode.AFTER_INTERFACE,
+            handoff_from=("a1",),
+        )
+    )
+    assert second.state is ClaimState.WAITING
+    assert second.decision is not None
+    assert second.decision.wait_for == ("a1",)
+
+    controller.publish_handoff(
+        "team/project",
+        "a1",
+        Handoff(
+            claim_id="a1",
+            commit="a1-interface-commit",
+            exported_symbols=("Editor.launch",),
+            behavior_contracts=("Editor.launch opens a document without mutation.",),
+        ),
+    )
+
+    released = controller.store.get("team/project", "a2")
+    assert controller.store.get("team/project", "a1").state is ClaimState.EXECUTING
+    assert released.state is ClaimState.APPROVED_WITH_CONSTRAINTS
+    assert released.decision is not None
+    assert "a1-interface-commit" in released.decision.constraints[0]
+
+
+def test_interface_handoff_rejects_unapproved_ownership_transfer() -> None:
+    controller = make_controller()
+    first = controller.submit_claim(
+        make_claim(
+            "a1",
+            ("src/editor/**",),
+            owned_symbols=("Editor.launch",),
+        )
+    )
+    approve_claim(controller, "a1")
+    controller.start_execution("team/project", "a1")
+    controller.publish_handoff(
+        "team/project",
+        "a1",
+        Handoff(
+            claim_id="a1",
+            commit="a1-interface-commit",
+            exported_symbols=("Editor.launch",),
+            behavior_contracts=("Editor.launch opens a document without mutation.",),
+        ),
+    )
+
+    second = controller.submit_claim(
+        make_claim(
+            "a2",
+            ("src/cli/**",),
+            dependency_mode=DependencyMode.AFTER_INTERFACE,
+            handoff_from=("a1",),
+            takes_over_symbols=("Editor.launch",),
+        )
+    )
+
+    assert second.state is ClaimState.NEEDS_HUMAN
+    assert second.decision is not None
+    assert "without predecessor approval" in second.decision.reason
+
+
 def test_overlapping_claim_is_released_directly_after_completion() -> None:
     controller = make_controller()
     first = controller.submit_claim(make_claim("claim-1", ("src/session/**",)))
@@ -261,20 +314,16 @@ def test_overlapping_claim_is_released_directly_after_completion() -> None:
 
     second = controller.submit_claim(make_claim("claim-2", ("src/session/api.py",)))
 
-    assert second.state is ClaimState.WAITING
+    assert second.state is ClaimState.APPROVED_WITH_CONSTRAINTS
     assert second.decision is not None
-    assert second.decision.wait_for == ("claim-1",)
+    assert second.decision.conflicts_with == ("claim-1",)
 
     controller.complete_claim("team/project", "claim-1")
 
     reassessed = controller.store.get("team/project", "claim-2")
     assert reassessed.state is ClaimState.APPROVED_WITH_CONSTRAINTS
     assert reassessed.decision is not None
-    assert reassessed.decision.constraints == (
-        "Inspect and incorporate the completed overlapping work before editing: "
-        "feature/agent-claim-1/claim-1",
-    )
-    assert controller.get_coordination_task("team/project") is None
+    assert "resolve any implementation or Git conflicts yourself" in reassessed.decision.constraints[-1]
 
 
 def test_new_overlap_sees_completed_unintegrated_claim() -> None:
@@ -286,7 +335,7 @@ def test_new_overlap_sees_completed_unintegrated_claim() -> None:
 
     second = controller.submit_claim(make_claim("claim-2", ("src/session/api.py",)))
 
-    assert second.state is ClaimState.ASSESSING
+    assert second.state is ClaimState.APPROVED
     task = controller.get_coordination_task("team/project")
     assert task is not None
     assert task.active_claims == ()
@@ -325,7 +374,7 @@ def test_claim_cannot_be_integrated_before_completion() -> None:
     controller = make_controller()
     claim = controller.submit_claim(make_claim("claim-1", ("src/session/**",)))
 
-    with pytest.raises(ValueError, match="assessing -> integrated"):
+    with pytest.raises(ValueError, match="approved -> integrated"):
         controller.integrate_claim(claim.claim.project_id, claim.claim.claim_id)
 
 
@@ -336,21 +385,10 @@ def test_integration_reassesses_claim_waiting_for_completed_work() -> None:
     controller.start_execution(first.claim.project_id, first.claim.claim_id)
     controller.complete_claim(first.claim.project_id, first.claim.claim_id)
     second = controller.submit_claim(make_claim("claim-2", ("src/session/api.py",)))
-    controller.submit_coordination_decision(
-        second.claim.project_id,
-        second.claim.claim_id,
-        Decision(
-            ClaimState.WAITING,
-            "wait for the completed branch to reach main",
-            wait_for=(first.claim.claim_id,),
-            conflicts_with=(first.claim.claim_id,),
-        ),
-    )
-
     controller.integrate_claim(first.claim.project_id, first.claim.claim_id)
 
     reassessed = controller.store.get(second.claim.project_id, second.claim.claim_id)
-    assert reassessed.state is ClaimState.ASSESSING
+    assert reassessed.state is ClaimState.APPROVED
     task = controller.get_coordination_task("team/project")
     assert task is not None
     assert task.claim.claim.claim_id == second.claim.claim_id
@@ -386,7 +424,7 @@ def test_resubmitted_claim_replay_is_idempotent_and_amendment_needs_version() ->
         make_claim("claim-1", ("src/login/**", "src/router/**"), version=2)
     )
     assert amended.claim.version == 2
-    assert amended.state is ClaimState.ASSESSING
+    assert amended.state is ClaimState.APPROVED
 
 
 def test_claim_rejects_non_scoped_work_branch() -> None:
@@ -433,7 +471,7 @@ def test_m_gets_task_and_c_applies_its_decision() -> None:
     controller = make_controller()
     submitted = controller.submit_claim(make_claim("claim-1", ("src/login/**",)))
 
-    assert submitted.state is ClaimState.ASSESSING
+    assert submitted.state is ClaimState.APPROVED
     task = controller.get_coordination_task("team/project")
     assert task is not None
     assert task.claim.claim.claim_id == "claim-1"
