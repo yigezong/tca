@@ -4,6 +4,8 @@ Team Code Agent（TCA）是一个 Git-first 的多 Agent 协作控制服务。�
 
 本仓库是 TCA Server 源码仓库，不是被 TCA 管理的业务 repo。本仓库自身不使用 TCA 自举，因此根目录不保存 `.tca/` 或 `.codex/` 活配置。被测 repo 的接入模板在 `templates/test-repo/`。
 
+想在已有 Codex 中直接使用 TCA，可先看 [Codex 原生接入（本地预览版）](docs/codex-native.md)：本地 MCP + SQLite，不需要模型 API key、TCA 云服务或演示网页。多人跨电脑时仍需共享 TCA Server。
+
 ## 核心角色
 
 ```text
