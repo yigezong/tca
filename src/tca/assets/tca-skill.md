@@ -19,4 +19,6 @@ If TCA MCP is unavailable, stop before shared edits and report the connection pr
 
 ## Manager (`agent-m`)
 
-Use a separate checkout or worktree. Read both claims and the needed shared code, then call `wait_for_coordination_task(project_id)`. Publish concrete ownership and interface advice with `publish_coordination_advice` and submit the coordination decision. Keep both developer tasks viable where possible. Do not modify business code. If there is no task, tell the user and wait for the next request; a Codex chat is not an always-on daemon.
+Use a separate, read-only checkout or worktree. Read the claims and needed shared code, then call `wait_for_coordination_task(project_id)`. For a not-yet-executing group, inspect every active Claim in the declared `coordination_group` before deciding. Publish a separate, actionable `publish_coordination_advice` message for each owning A, then submit each Claim's decision. Do not let the first A start while another group Claim is still `assessing`.
+
+If one group member is already `executing` when a new Claim arrives, do not interrupt, message, or change the existing Claim. Review the active context, publish advice only for the new Claim, and decide only that Claim. Keep both developer tasks viable where possible. Do not modify business code. If there is no task, tell the user and wait for the next request; a Codex chat is not an always-on daemon.

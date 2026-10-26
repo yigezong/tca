@@ -117,7 +117,7 @@ M 的流程：
 4. 与仍 active 的路径重叠时使用 `waiting`；只与 completed 工作重叠时，使用 `approved_with_constraints` 要求纳入其工作分支，无法安全集成时使用 `needs_human`。
 5. 处理完一条后继续等下一条。
 
-真实用户不需要 checkout 本仓库。A/M 应使用 Codex、Claude、Cursor 等客户端的原生 MCP 配置，直接连接 TCA Server 的 `/mcp`。本仓库里的 `tca-client` 只是维护者本地开发和 smoke test 的辅助命令，不是正式用户流程的一部分。
+CLI 尚未发布独立安装包，首次安装需要取得本仓库源码。A/M 随后使用 Codex 等客户端的原生 MCP 配置连接 TCA Server 的 `/mcp`。本仓库里的 `tca-client` 只是维护者本地开发和 smoke test 的辅助命令，不是正式用户流程的一部分。
 
 当前 smoke M 只是轻量 runner。它做的是路径级自动判断，不是完整语义审查。更复杂的 M 可以在同一个 MCP 协议上实现。
 
@@ -202,6 +202,8 @@ GitHub webhook 用 `GITHUB_WEBHOOK_SECRET` 签名校验，不使用 `TCA_API_TOK
 
 ## 5. 团队接入和配置归属
 
+本节记录旧式共享 `TCA_API_TOKEN` 和 Claim webhook 接入流程，供已有部署迁移。新项目推荐使用 GitHub 用户身份鉴权：所有者启动 repo，开发者按自己的仓库权限自行加入。最新命令见 [中文 README](../README_zh.md)；英文入口见 [README](../README.md)。
+
 先区分三种身份：TCA Server 管理者负责服务，项目发起者负责把一个 repo 接入服务，团队成员负责自己的开发环境。一个人可以兼任，但配置仍然只做在它所属的那一层。
 
 | 配置 | 谁创建或设置 | 作用范围 | 放在哪里 | 是否提交 |
@@ -215,9 +217,9 @@ GitHub webhook 用 `GITHUB_WEBHOOK_SECRET` 签名校验，不使用 `TCA_API_TOK
 | GitHub 凭证 | 每位成员 | 一个 GitHub 用户 | credential manager / SSH agent | 否 |
 | M 的 repo checkout | 运行 M 的人或团队机器 | 一个项目的 M | M 自己的本地目录 | 否 |
 
-当前极简鉴权模型只有一个 Server 级共享 `TCA_API_TOKEN`。它表示“允许访问这个 TCA Server”，不是个人或项目身份：Server 管理者生成一次，获准访问该实例的成员领取同一个值。成员不应自行生成 token。工作区角色和 A 的身份来自 `TCA_AGENT_ID`，Git push 的人员权限来自各自的 GitHub 凭证。
+本节的旧式鉴权模型只有一个 Server 级共享 `TCA_API_TOKEN`。它表示“允许访问这个 TCA Server”，不是个人或项目身份：Server 管理者生成一次，获准访问该实例的成员领取同一个值。成员不应自行生成 token。工作区角色和 A 的身份来自 `TCA_AGENT_ID`，Git push 的人员权限来自各自的 GitHub 凭证。
 
-`project_id` 可以让一个 Server 同时保存多个项目的独立 Claim 状态，但当前 token、`GITHUB_WEBHOOK_SECRET` 和 `GITHUB_TOKEN` 都是 Server 级配置，不构成多租户权限隔离。因此当前实例只适合同一信任范围内的多个项目；互不信任的团队要共用公共服务，必须先增加项目级凭证、授权和审计。
+旧式共享 token 不构成项目级权限隔离，因此只适合同一信任范围内的多个项目。GitHub 模式则在每次操作时核验用户身份和 repo 权限。
 
 ### TCA Server
 
@@ -292,9 +294,9 @@ Webhook 的 Payload URL、secret 和事件选择见第 6 节。一个 repo 只�
 
 `token_env: TCA_API_TOKEN` 只是在声明环境变量名。它不会生成 token，也不意味着每个成员应该创建一个新 token。真实 token 不进入 repo、prompt 或日志。
 
-当前还没有从 `.tca/project.yaml` 自动写入各客户端配置的正式命令，因此第 3 步需要在每台机器上做一次。后面的“原生 MCP 配置生成”是计划中的简化功能。
+新式 Codex 接入可使用 `tca-codex start` / `join` 自动配置 MCP；旧式其它客户端仍需按本节手动配置。
 
-成员不需要 checkout TCA Server 源码，不需要配置被测 repo webhook，也不需要接触 `DATABASE_URL`、`GITHUB_TOKEN` 或 `GITHUB_WEBHOOK_SECRET`。
+使用旧式手工配置的成员不需要 checkout TCA Server 源码，不需要配置被测 repo webhook，也不需要接触 `DATABASE_URL`、`GITHUB_TOKEN` 或 `GITHUB_WEBHOOK_SECRET`。目前新式 CLI 尚未发布独立安装包，首次安装需要取得 TCA 源码。
 
 ### A 工作区：每个并行 Agent 一个身份
 
@@ -364,13 +366,13 @@ mcp:
 
 ## 6. GitHub 和 Vercel 怎么分清
 
-`fringsoo/tca` 是 TCA Server 源码 repo。它和 Vercel 的关系是：
+本仓库是 TCA Server 源码 repo。它和 Vercel 的关系是：
 
 ```text
-fringsoo/tca push -> Vercel Git integration -> 部署 TCA Server
+源码仓库 push -> Vercel Git integration -> 部署 TCA Server
 ```
 
-这条链路不需要在 `fringsoo/tca` 自己的 GitHub Webhooks 里配置 `/webhooks/github`。
+这条链路不需要在源码仓库自己的 GitHub Webhooks 里配置 `/webhooks/github`。
 
 `/webhooks/github` 是给被测 repo 用的：
 
@@ -420,7 +422,7 @@ Git repo。因此正式 direct adapter 必须在本地或对应 Git provider 上
 手工实验可以让 A 直接调用 `submit_claim`，但它只证明状态机可用，不能证明
 Git 基线和集成验证完整。CooperBench 正式批测应为每个 feature pair 建独立的
 本地 bare repo 和唯一 `project_id`，由 runner 内的 direct adapter 监听 Claim
-分支与默认分支。具体实现清单见根目录 `TODO.md`。
+分支与默认分支。批量实验的运行器属于独立的实验项目，不包含在本服务仓库中。
 
 GitHub 模式仍适合验证一个真实团队 repo 的完整 webhook 流程。它不适合当前的
 CooperBench 批测：GitHub adapter 强制 `project_id` 等于 `owner/repo`，重复使用
@@ -432,9 +434,8 @@ CooperBench 批测：GitHub adapter 强制 `project_id` 等于 `owner/repo`，�
 
 | 文件 | 作用 |
 |---|---|
-| `README.md` | 项目入口和最小部署/使用说明 |
+| `README.md` / `README_zh.md` | 英文 / 中文入口和最小部署、使用说明 |
 | `AGENTS.md` | 本仓库 Agent 工作规则 |
-| `TODO.md` | 用户体验、CooperBench 批测和真实团队适配路线图 |
 | `.env.example` | TCA Server 环境变量模板 |
 | `.gitignore` | 忽略本地环境、缓存、数据库和 secret |
 | `app.py` | Vercel ASGI 入口 |
@@ -447,7 +448,8 @@ CooperBench 批测：GitHub adapter 强制 `project_id` 等于 `owner/repo`，�
 
 | 文件 | 作用 |
 |---|---|
-| `src/tca/app.py` | Starlette app，挂载 `/health`、`/api`、`/mcp`、`/webhooks/github` |
+| `src/tca/app.py` | Starlette app，挂载首页、`/health`、`/api`、`/mcp`、`/webhooks/github` |
+| `src/tca/web/` | 静态项目主页和 Claim 查询界面 |
 | `src/tca/mcp_server.py` | MCP tools |
 | `src/tca/client_cli.py` | 维护者本地开发和 smoke test 用 CLI |
 | `src/tca/controller.py` | 状态机和协调队列逻辑 |
@@ -559,5 +561,4 @@ TCA 不替代 CooperBench evaluator，CooperBench 也不会自动使用 TCA。
 
 当前仓库已经具备 direct MCP tools 和状态机，但上述一键批测 runner 尚未实现。
 在 runner 完成前，只能按同样拓扑手工跑单个 pair；不要把手工直接调用
-`submit_claim` 的结果当成完整 direct adapter 验证。实现顺序和验收标准见
-`TODO.md`。
+`submit_claim` 的结果当成完整 direct adapter 验证。批量实验运行器应在独立项目中实现。

@@ -34,6 +34,12 @@ class ClaimStore:
             self._ensure_schema()
 
     def _ensure_schema(self) -> None:
+        self._connection.execute("""CREATE TABLE IF NOT EXISTS projects (
+            project_id TEXT PRIMARY KEY, owner_login TEXT NOT NULL,
+            created_at TEXT NOT NULL)""")
+        self._connection.execute("""CREATE TABLE IF NOT EXISTS project_agent_slots (
+            project_id TEXT NOT NULL, author TEXT NOT NULL, claim_id TEXT NOT NULL,
+            PRIMARY KEY (project_id, author))""")
         self._ensure_claims_table()
         self._ensure_coordination_tasks_table()
         self._connection.execute("""CREATE TABLE IF NOT EXISTS subgoal_events (
@@ -169,6 +175,65 @@ class ClaimStore:
 
     def close(self) -> None:
         self._connection.close()
+
+    def create_project(self, project_id: str, owner_login: str) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                """INSERT INTO projects(project_id, owner_login, created_at)
+                VALUES (?, ?, ?) ON CONFLICT(project_id) DO NOTHING""",
+                (project_id, owner_login, _now()),
+            )
+            if self.project_owner(project_id).lower() != owner_login.lower():
+                raise PermissionError("project is already owned by another GitHub user")
+
+    def project_owner(self, project_id: str) -> str | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT owner_login FROM projects WHERE project_id = ?", (project_id,)
+            ).fetchone()
+            return str(row["owner_login"]) if row else None
+
+    def list_projects(self) -> list[tuple[str, str]]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT project_id, owner_login FROM projects ORDER BY project_id"
+            ).fetchall()
+            return [(str(row["project_id"]), str(row["owner_login"])) for row in rows]
+
+    def reserve_agent_claim(self, project_id: str, author: str, claim_id: str) -> bool:
+        """Atomically reserve this developer's single active Claim slot."""
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                "SELECT claim_id FROM project_agent_slots WHERE project_id = ? AND author = ?",
+                (project_id, author),
+            ).fetchone()
+            if row is not None:
+                previous = str(row["claim_id"])
+                if previous == claim_id:
+                    return False
+                state = self._connection.execute(
+                    "SELECT state FROM claims WHERE project_id = ? AND claim_id = ?",
+                    (project_id, previous),
+                ).fetchone()
+                if state is None or ClaimState(str(state["state"])) in ACTIVE_STATES:
+                    raise PermissionError("one developer may have only one active A Claim per project")
+                self._connection.execute(
+                    "UPDATE project_agent_slots SET claim_id = ? WHERE project_id = ? AND author = ?",
+                    (claim_id, project_id, author),
+                )
+            else:
+                self._connection.execute(
+                    "INSERT INTO project_agent_slots VALUES (?, ?, ?)",
+                    (project_id, author, claim_id),
+                )
+            return True
+
+    def release_agent_claim(self, project_id: str, author: str, claim_id: str) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                "DELETE FROM project_agent_slots WHERE project_id = ? AND author = ? AND claim_id = ?",
+                (project_id, author, claim_id),
+            )
 
     def save_received(self, claim: Claim) -> ClaimRecord:
         with self._lock, self._connection:

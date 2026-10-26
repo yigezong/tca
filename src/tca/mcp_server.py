@@ -8,9 +8,10 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 from .controller import Controller
-from .domain import Claim, ClaimState, CoordinationAdvice, Decision, Handoff, SubgoalEvent
+from .domain import ACTIVE_STATES, Claim, ClaimState, CoordinationAdvice, Decision, Handoff, SubgoalEvent
 from .rules import BasicRuleChecker
 from .store import build_store
+from .project_access import ProjectAccess
 
 INSTRUCTIONS = """
 TCA coordinates coding-agent work in Git-enabled projects.
@@ -41,7 +42,7 @@ def build_controller() -> Controller:
     )
 
 
-def create_mcp(controller: Controller | None = None) -> FastMCP:
+def create_mcp(controller: Controller | None = None, access: ProjectAccess | None = None) -> FastMCP:
     controller = controller or build_controller()
     allowed_hosts = [
         host.strip()
@@ -63,11 +64,32 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
     @mcp.tool()
     def submit_claim(claim: dict[str, object]) -> dict[str, object]:
         """For A/adapters: submit a Claim directly when no Git provider webhook exists."""
-        return controller.submit_claim(Claim.from_mapping(claim)).to_mapping()
+        parsed = Claim.from_mapping(claim)
+        if access:
+            access.require(parsed.project_id, "a", parsed.author)
+            reserved = controller.store.reserve_agent_claim(
+                parsed.project_id, parsed.author.lower(), parsed.claim_id
+            )
+            try:
+                return controller.submit_claim(parsed).to_mapping()
+            except Exception:
+                if reserved:
+                    try:
+                        remaining = controller.store.get(parsed.project_id, parsed.claim_id)
+                    except KeyError:
+                        remaining = None
+                    if remaining is None or remaining.state not in ACTIVE_STATES:
+                        controller.store.release_agent_claim(
+                            parsed.project_id, parsed.author.lower(), parsed.claim_id
+                        )
+                raise
+        return controller.submit_claim(parsed).to_mapping()
 
     @mcp.tool()
     def get_claim_state(project_id: str, claim_id: str) -> dict[str, object]:
         """For A: get authoritative state, constraints, and allowed actions."""
+        if access:
+            access.role(project_id)
         return controller.get_claim_state(project_id, claim_id)
 
     @mcp.tool()
@@ -78,6 +100,8 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
         poll_seconds: float = 0.25,
     ) -> dict[str, object]:
         """For A: wait until C finishes assessing a Claim or timeout expires."""
+        if access:
+            await asyncio.to_thread(access.role, project_id)
         deadline = time.monotonic() + max(0.0, timeout_seconds)
         pending = {
             ClaimState.RECEIVED.value,
@@ -93,11 +117,15 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
     @mcp.tool()
     def start_execution(project_id: str, claim_id: str) -> dict[str, object]:
         """For A: move an approved Claim to executing before shared changes."""
+        if access:
+            access.require_claim_owner(project_id, claim_id)
         return controller.start_execution(project_id, claim_id).to_mapping()
 
     @mcp.tool()
     def complete_claim(project_id: str, claim_id: str) -> dict[str, object]:
         """For A: mark a pushed work branch completed and trigger reevaluation."""
+        if access:
+            access.require_claim_owner(project_id, claim_id)
         return controller.complete_claim(project_id, claim_id).to_mapping()
 
     @mcp.tool()
@@ -105,6 +133,8 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
         project_id: str, claim_id: str, progress: str = ""
     ) -> dict[str, object]:
         """For A: report progress/heartbeat while executing; extends the execution deadline."""
+        if access:
+            access.require_claim_owner(project_id, claim_id)
         return controller.report_progress(project_id, claim_id, progress).to_mapping()
 
     @mcp.tool()
@@ -120,6 +150,8 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
         uncertainty: the later integrator resolves those from the latest code.
         Context is natural language only; never include a patch.
         """
+        if access:
+            access.require_claim_owner(project_id, claim_id)
         return controller.request_requirements_clarification(
             project_id, claim_id, question, context
         ).to_mapping()
@@ -127,19 +159,28 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
     @mcp.tool()
     def record_subgoal_event(event: dict[str, object]) -> dict[str, object]:
         """For A: report one coarse subgoal start/finish/integration event."""
-        return controller.record_subgoal_event(SubgoalEvent.from_mapping(event)).to_mapping()
+        parsed = SubgoalEvent.from_mapping(event)
+        if access:
+            access.require_claim_owner(parsed.project_id, parsed.claim_id)
+            access.require(parsed.project_id, "a", parsed.author)
+        return controller.record_subgoal_event(parsed).to_mapping()
 
     @mcp.tool()
     def get_integration_context(project_id: str, claim_id: str) -> dict[str, object]:
         """For the later A: obtain public related work and M advice before integrating."""
+        if access:
+            access.role(project_id)
         return controller.get_integration_context(project_id, claim_id)
 
     @mcp.tool()
     def publish_coordination_advice(advice: dict[str, object]) -> dict[str, object]:
         """For M: publish non-blocking natural-language advice to one owning A."""
-        return controller.publish_coordination_advice(
-            CoordinationAdvice.from_mapping(advice)
-        ).to_mapping()
+        parsed = CoordinationAdvice.from_mapping(advice)
+        if access:
+            access.require(parsed.project_id, "m")
+            if parsed.advisor != "agent-m":
+                raise PermissionError("M advice must use advisor agent-m")
+        return controller.publish_coordination_advice(parsed).to_mapping()
 
     @mcp.tool()
     def publish_handoff(
@@ -150,6 +191,8 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
         A successor declared with dependency_mode=after_interface is released
         after this checkpoint, rather than after the publisher completes.
         """
+        if access:
+            access.require_claim_owner(project_id, claim_id)
         return controller.publish_handoff(
             project_id, claim_id, Handoff.from_mapping(handoff)
         ).to_mapping()
@@ -157,6 +200,8 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
     @mcp.tool()
     def integrate_claim(project_id: str, claim_id: str) -> dict[str, object]:
         """Fallback: confirm integration when no webhook can prove branch ancestry."""
+        if access:
+            access.require(project_id, "m")
         return controller.integrate_claim(project_id, claim_id).to_mapping()
 
     @mcp.tool()
@@ -168,6 +213,12 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
         lease_seconds: float = 300.0,
     ) -> dict[str, object] | None:
         """For M: lease a task plus context; expired leases are automatically retried."""
+        if access:
+            if not project_id:
+                raise PermissionError("M must select a project")
+            await asyncio.to_thread(access.require, project_id, "m")
+            if worker_id != "agent-m":
+                raise PermissionError("M worker_id must be agent-m")
         deadline = time.monotonic() + max(0.0, timeout_seconds)
         while True:
             task = controller.lease_coordination_task(
@@ -191,6 +242,10 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
         worker_id: str | None = None,
     ) -> dict[str, object]:
         """For M: submit a recommendation; C validates and applies it."""
+        if access:
+            access.require(project_id, "m")
+            if worker_id not in (None, "agent-m"):
+                raise PermissionError("M worker_id must be agent-m")
         decision = Decision.from_mapping(
             {
                 "state": state,
@@ -223,6 +278,8 @@ def create_mcp(controller: Controller | None = None) -> FastMCP:
         developer's patch; the server persists only minimal requirements for
         that developer. uncertainty is 0 (certain) through 1 (no preference).
         """
+        if access:
+            access.require(project_id, "m")
         decision = Decision.from_mapping(
             {
                 "state": state,

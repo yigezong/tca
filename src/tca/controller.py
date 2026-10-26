@@ -246,6 +246,42 @@ class Controller:
         context = self.store.list_coordination_context(
             claim.project_id, exclude=claim.claim_id
         )
+        if claim.coordination_group and claim.expected_group_size > 1:
+            grouped = [
+                record
+                for record in context
+                if record.claim.coordination_group == claim.coordination_group
+                and record.state not in {ClaimState.COMPLETED, ClaimState.INTEGRATED}
+            ]
+            # Before anyone in the group starts, hold the first Claims until
+            # the declared peer set is present. M then reviews both sides.
+            # Once a peer is executing, the group is asynchronous: leave that
+            # peer untouched and submit only this new Claim for advice.
+            if not any(record.state is ClaimState.EXECUTING for record in grouped):
+                group_records = [*grouped, self.store.get(claim.project_id, claim.claim_id)]
+                if len(group_records) < claim.expected_group_size:
+                    return self.store.get(claim.project_id, claim.claim_id)
+                for record in group_records:
+                    if record.state in {
+                        ClaimState.APPROVED,
+                        ClaimState.APPROVED_WITH_CONSTRAINTS,
+                    }:
+                        record = self.store.transition(
+                            record.claim.project_id,
+                            record.claim.claim_id,
+                            {
+                                ClaimState.APPROVED,
+                                ClaimState.APPROVED_WITH_CONSTRAINTS,
+                            },
+                            ClaimState.ASSESSING,
+                        )
+                    if record.state is ClaimState.ASSESSING:
+                        self.store.queue_coordination(
+                            record.claim.project_id,
+                            record.claim.claim_id,
+                            now=self._now_iso(),
+                        )
+                return self.store.get(claim.project_id, claim.claim_id)
         return self._assess_or_queue(claim, context)
 
     def publish_handoff(
@@ -293,6 +329,20 @@ class Controller:
             raise ValueError(
                 f"illegal transition for {claim_id}: {record.state.value} -> executing"
             )
+        claim = record.claim
+        if claim.coordination_group:
+            unresolved = [
+                peer
+                for peer in self.store.list_coordination_context(project_id)
+                if peer.claim.coordination_group == claim.coordination_group
+                and peer.claim.claim_id != claim_id
+                and peer.state is ClaimState.ASSESSING
+            ]
+            if unresolved:
+                raise ValueError(
+                    "coordination group is still awaiting M decisions for: "
+                    + ", ".join(peer.claim.claim_id for peer in unresolved)
+                )
         record = self.store.transition(
             project_id,
             claim_id,
@@ -609,7 +659,7 @@ class Controller:
                         )
                     )
                 )
-                return self.store.transition(
+                record = self.store.transition(
                     claim.project_id,
                     claim.claim_id,
                     {ClaimState.ASSESSING},
@@ -621,13 +671,17 @@ class Controller:
                         conflicts_with=hard_decision.conflicts_with,
                     ),
                 )
-            return self.store.transition(
+                self._queue_late_group_advice(claim, active, record)
+                return record
+            record = self.store.transition(
                 claim.project_id,
                 claim.claim_id,
                 {ClaimState.ASSESSING},
                 hard_decision.state,
                 decision=hard_decision,
             )
+            self._queue_late_group_advice(claim, active, record)
+            return record
         if interface_decision is not None:
             return self.store.transition(
                 claim.project_id,
@@ -653,6 +707,23 @@ class Controller:
             claim.project_id, claim.claim_id, now=self._now_iso()
         )
         return record
+
+    def _queue_late_group_advice(
+        self, claim: Claim, active: list[ClaimRecord], record: ClaimRecord
+    ) -> None:
+        """Queue advice for a late group member without re-queuing its peer."""
+        if (
+            claim.coordination_group
+            and claim.expected_group_size > 1
+            and any(
+                peer.claim.coordination_group == claim.coordination_group
+                and peer.state is ClaimState.EXECUTING
+                for peer in active
+            )
+        ):
+            self.store.queue_coordination(
+                claim.project_id, claim.claim_id, now=self._now_iso()
+            )
 
     def _interface_handoff_decision(
         self, claim: Claim, context: list[ClaimRecord]

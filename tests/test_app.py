@@ -94,6 +94,9 @@ def test_claim_api_requires_project_id(monkeypatch, tmp_path) -> None:
 
     app = create_app()
 
+    assert request_status(app, "/") == 200
+    assert request_status(app, "/static/style.css") == 200
+    assert request_status(app, "/api/claims/missing") == 401
     assert request_status(app, "/api/claims/missing", token="secret") == 400
     assert (
         request_status(

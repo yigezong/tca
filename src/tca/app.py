@@ -1,38 +1,58 @@
 from __future__ import annotations
 
 import contextlib
+import asyncio
+import json
 import os
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import uvicorn
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import HTMLResponse, JSONResponse
 from starlette.routing import Mount, Route
+from starlette.staticfiles import StaticFiles
 
 from .controller import Controller
-from .github import GitHubClient, GitHubWebhookHandler
+from .github import GitHubClient, GitHubWebhookHandler, verify_github_signature
 from .mcp_server import create_mcp
 from .rules import BasicRuleChecker
 from .store import build_store
+from .project_access import ProjectAccess, current_principal
 
 
 class BearerAuthMiddleware:
-    def __init__(self, app, token: str) -> None:
+    def __init__(self, app, token: str, access: ProjectAccess | None = None) -> None:
         self.app = app
         self.token = token
+        self.access = access
 
     async def __call__(self, scope, receive, send) -> None:
         protected = ("/mcp", "/api/")
-        is_protected = (
-            self.token
-            and scope["type"] == "http"
-            and scope["path"].startswith(protected)
-        )
+        is_protected = scope["type"] == "http" and scope["path"].startswith(protected)
         if is_protected:
             headers = {key.lower(): value for key, value in scope.get("headers", [])}
+            authorization = headers.get(b"authorization", b"")
+            if self.access:
+                try:
+                    if not authorization.startswith(b"Bearer "):
+                        raise PermissionError("missing GitHub token")
+                    principal = await asyncio.to_thread(
+                        self.access.github.principal, authorization[7:].decode("ascii")
+                    )
+                except (PermissionError, UnicodeDecodeError):
+                    response = JSONResponse({"error": "unauthorized"}, status_code=401)
+                    await response(scope, receive, send)
+                    return
+                context_token = current_principal.set(principal)
+                try:
+                    await self.app(scope, receive, send)
+                finally:
+                    current_principal.reset(context_token)
+                return
             expected = f"Bearer {self.token}".encode()
-            if headers.get(b"authorization") != expected:
+            if authorization != expected:
                 response = JSONResponse(
                     {"error": "unauthorized"},
                     status_code=401,
@@ -85,12 +105,20 @@ def _bool_env(name: str, default: bool) -> bool:
 
 
 def create_app():
+    auth_mode = os.getenv("TCA_AUTH_MODE", "shared").strip().lower()
+    if auth_mode not in {"shared", "github"}:
+        raise RuntimeError("TCA_AUTH_MODE must be shared or github")
     token = os.getenv("TCA_API_TOKEN", "")
-    if not token:
+    if auth_mode == "shared" and not token:
         raise RuntimeError("TCA_API_TOKEN is required")
 
     controller, github = build_components()
-    mcp = create_mcp(controller)
+    access = ProjectAccess(controller.store) if auth_mode == "github" else None
+    mcp = create_mcp(controller, access)
+    web_dir = Path(__file__).parent / "web"
+
+    async def homepage(request: Request) -> HTMLResponse:
+        return HTMLResponse((web_dir / "index.html").read_text(encoding="utf-8"))
 
     async def health(request: Request) -> JSONResponse:
         backend = "postgres" if os.getenv("DATABASE_URL") else "sqlite"
@@ -101,19 +129,57 @@ def create_app():
         if not project_id:
             return JSONResponse({"error": "project_id is required"}, status_code=400)
         try:
+            if access:
+                await asyncio.to_thread(access.role, project_id)
             return JSONResponse(
                 controller.get_claim_state(project_id, request.path_params["claim_id"])
             )
+        except PermissionError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=403)
         except KeyError:
             return JSONResponse({"error": "claim not found"}, status_code=404)
+
+    async def projects(request: Request) -> JSONResponse:
+        if access is None:
+            return JSONResponse({"error": "GitHub project mode is disabled"}, status_code=404)
+        try:
+            if request.method == "GET":
+                return JSONResponse({"projects": await asyncio.to_thread(access.list_projects)})
+            data = await request.json()
+            if not isinstance(data, dict):
+                raise ValueError("project request must be a JSON object")
+            started = await asyncio.to_thread(access.start, str(data.get("project_id", "")))
+            return JSONResponse(started, status_code=201)
+        except (PermissionError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=403)
+
+    async def join_project(request: Request) -> JSONResponse:
+        if access is None:
+            return JSONResponse({"error": "GitHub project mode is disabled"}, status_code=404)
+        project_id = request.path_params["owner"] + "/" + request.path_params["repo"]
+        try:
+            return JSONResponse(await asyncio.to_thread(access.join, project_id))
+        except PermissionError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=403)
 
     async def github_webhook(request: Request) -> JSONResponse:
         if github is None:
             return JSONResponse({"error": "GitHub webhook is disabled"}, status_code=404)
         try:
+            body = await request.body()
+            signature = request.headers.get("x-hub-signature-256")
+            if access is not None:
+                if not verify_github_signature(github.secret, body, signature):
+                    raise PermissionError("invalid GitHub webhook signature")
+                payload = json.loads(body)
+                repository = str(payload.get("repository", {}).get("full_name", "")).lower()
+                if access.store.project_owner(repository) is None:
+                    raise PermissionError("repository has no TCA project")
+                if str(payload.get("ref", "")).startswith("refs/heads/tca/claim/"):
+                    raise PermissionError("GitHub-auth projects submit Claims through MCP")
             result = github.handle(
-                await request.body(),
-                request.headers.get("x-hub-signature-256"),
+                body,
+                signature,
                 request.headers.get("x-github-event"),
             )
             return JSONResponse(
@@ -138,14 +204,18 @@ def create_app():
 
     app = Starlette(
         routes=[
+            Route("/", homepage),
+            Mount("/static", app=StaticFiles(directory=web_dir)),
             Route("/health", health),
             Route("/api/claims/{claim_id}", get_claim),
+            Route("/api/projects", projects, methods=["GET", "POST"]),
+            Route("/api/projects/{owner}/{repo}/join", join_project, methods=["POST"]),
             Route("/webhooks/github", github_webhook, methods=["POST"]),
             Mount("/", app=mcp.streamable_http_app()),
         ],
         lifespan=lifespan,
     )
-    return BearerAuthMiddleware(app, token)
+    return BearerAuthMiddleware(app, token, access)
 
 
 def main() -> None:

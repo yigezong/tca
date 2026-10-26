@@ -134,7 +134,7 @@ def test_grouped_claims_can_start_asynchronously() -> None:
     controller = make_controller()
     first = controller.submit_claim(
         make_claim(
-            "a1", ("src/a.py",), coordination_group="pair-1", expected_group_size=2
+            "a1", ("src/a.py",), coordination_group="pair-1", expected_group_size=1
         )
     )
     assert first.state is ClaimState.APPROVED
@@ -159,6 +159,8 @@ def test_grouped_claims_do_not_require_a_shared_boundary_contract_to_start() -> 
                 claim_id, (path,), coordination_group="pair-1", expected_group_size=2
             )
         )
+    approve_claim(controller, "a1")
+    approve_claim(controller, "a2")
     controller.start_execution("team/project", "a1")
     controller.start_execution("team/project", "a2")
     assert controller.store.get("team/project", "a1").state is ClaimState.EXECUTING

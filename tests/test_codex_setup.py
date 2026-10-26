@@ -15,6 +15,7 @@ from tca.codex_setup import (
     SetupError,
     desired_transport,
     project_id_for,
+    project_command,
     setup,
     transport_matches,
 )
@@ -115,6 +116,24 @@ def test_remote_transport_requires_https() -> None:
         desired_transport("remote", "http://example.com/mcp", "TCA_API_TOKEN")
 
 
+def test_explicit_local_to_remote_migration(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "codex-home").mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
+    repo = make_repo(tmp_path / "project")
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin",
+                    "git@github.com:owner/repo.git"], check=True)
+    setup(args(repo))
+    remote = args(repo, agent_id="agent-m", mode="remote",
+                  server_url="https://tca.example.com/mcp",
+                  token_env="TCA_GITHUB_TOKEN")
+    with pytest.raises(SetupError, match="Refusing to overwrite"):
+        setup(remote)
+    remote.replace_local_config = True
+    setup(remote)
+    assert "mode: remote" in (repo / ".tca/project.yaml").read_text()
+    assert (repo / ".tca/agent-id").read_text() == "agent-m\n"
+
+
 def test_transport_match_checks_all_requested_fields() -> None:
     desired = {"type": "stdio", "command": "/python", "args": ["-m", "tca.local_mcp"]}
     assert transport_matches({**desired, "env": None}, desired)
@@ -126,6 +145,23 @@ def test_project_id_from_github_remote(tmp_path: Path) -> None:
     subprocess.run(["git", "-C", str(repo), "remote", "add", "origin",
                     "git@github.com:owner/repo.git"], check=True)
     assert project_id_for(repo) == "owner/repo"
+
+
+def test_owner_can_start_by_repo_id_before_clone(monkeypatch, capsys) -> None:
+    calls = []
+    monkeypatch.setattr("tca.codex_setup._github_token", lambda name: "test-token")
+    monkeypatch.setattr(
+        "tca.codex_setup._project_api",
+        lambda url, token, path, body=None: calls.append((path, body)) or
+        {"project_id": "owner/repo", "role": "m"},
+    )
+    project_command(argparse.Namespace(
+        command="start", repo=None, project_id="OWNER/Repo",
+        server_url="https://tca.example.com/mcp", token_env="TCA_GITHUB_TOKEN",
+        replace_mcp=False,
+    ))
+    assert calls == [("/api/projects", {"project_id": "owner/repo"})]
+    assert "Started owner/repo as M" in capsys.readouterr().out
 
 
 @pytest.mark.anyio
