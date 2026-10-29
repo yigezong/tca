@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import json
 import shutil
 import subprocess
 import sys
@@ -16,6 +18,8 @@ from tca.codex_setup import (
     desired_transport,
     project_id_for,
     project_command,
+    login_command,
+    _session_path,
     setup,
     transport_matches,
 )
@@ -134,6 +138,56 @@ def test_explicit_local_to_remote_migration(tmp_path: Path, monkeypatch) -> None
     assert (repo / ".tca/agent-id").read_text() == "agent-m\n"
 
 
+def test_existing_remote_config_can_migrate_off_github_token(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "codex-home").mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
+    repo = make_repo(tmp_path / "project")
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin",
+                    "git@github.com:owner/repo.git"], check=True)
+    old = args(repo, agent_id="agent-m", mode="remote",
+               server_url="https://tca.example.com/mcp", token_env="TCA_GITHUB_TOKEN")
+    setup(old)
+    skill = repo / ".agents/skills/tca-coordination/SKILL.md"
+    skill.write_text("---\nname: tca-coordination\n---\n# TCA in Codex\nold workflow\n")
+    new = args(repo, agent_id="agent-m", mode="remote",
+               server_url="https://tca.example.com/mcp", token_env="TCA_TOKEN")
+    with pytest.raises(SetupError, match="Refusing to overwrite"):
+        setup(new)
+    new.replace_local_config = True
+    new.replace_mcp = True
+    setup(new)
+    assert "token_env: TCA_TOKEN" in (repo / ".tca/project.yaml").read_text()
+    assert "old workflow" not in skill.read_text()
+
+
+def test_cli_login_keeps_key_local_and_writes_tca_only_session(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    server_url = "https://tca.example.com/mcp"
+    calls = []
+
+    def fake_api(url, token, path, body=None):
+        calls.append((url, token, path, body))
+        if path == "/api/auth/challenge":
+            return {"challenge_id": "one-time", "nonce": "random"}
+        assert path == "/api/auth/login"
+        assert token == ""
+        from cryptography.hazmat.primitives import serialization
+        public_key = serialization.load_ssh_public_key(body["public_key"].encode())
+        public_key.verify(base64.b64decode(body["signature"]),
+                          b"tca-login-v1\none-time\nrandom")
+        return {"token": "tca_scoped-session", "login": "alice",
+                "expires_at": "2099-01-01T00:00:00Z"}
+
+    monkeypatch.setattr("tca.codex_setup._project_api", fake_api)
+    login_command(argparse.Namespace(server_url=server_url, login="alice",
+                                     key_path=tmp_path / ".tca" / "identity"))
+    assert len(calls) == 2
+    assert (tmp_path / ".tca" / "identity").stat().st_mode & 0o777 == 0o600
+    path = _session_path(server_url)
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert json.loads(path.read_text())["token"] == "tca_scoped-session"
+
+
 def test_transport_match_checks_all_requested_fields() -> None:
     desired = {"type": "stdio", "command": "/python", "args": ["-m", "tca.local_mcp"]}
     assert transport_matches({**desired, "env": None}, desired)
@@ -149,15 +203,15 @@ def test_project_id_from_github_remote(tmp_path: Path) -> None:
 
 def test_owner_can_start_by_repo_id_before_clone(monkeypatch, capsys) -> None:
     calls = []
-    monkeypatch.setattr("tca.codex_setup._github_token", lambda name: "test-token")
+    monkeypatch.setattr("tca.codex_setup._tca_token", lambda server, name: "tca_test-token")
     monkeypatch.setattr(
         "tca.codex_setup._project_api",
         lambda url, token, path, body=None: calls.append((path, body)) or
-        {"project_id": "owner/repo", "role": "m"},
+        {"project_id": "owner/repo", "role": "m", "agent_id": "agent-m"},
     )
     project_command(argparse.Namespace(
         command="start", repo=None, project_id="OWNER/Repo",
-        server_url="https://tca.example.com/mcp", token_env="TCA_GITHUB_TOKEN",
+        server_url="https://tca.example.com/mcp", token_env="TCA_TOKEN",
         replace_mcp=False,
     ))
     assert calls == [("/api/projects", {"project_id": "owner/repo"})]

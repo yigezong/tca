@@ -10,10 +10,10 @@ Read `.tca/project.yaml` and `.tca/agent-id` before working. The latter is local
 ## Developer (`agent-id` other than `agent-m`)
 
 1. Read the request and relevant source. Identify the planned paths, owned symbols, behavior contracts, and dependencies yourself. Do not start shared edits yet.
-2. Read `project_id` from `.tca/project.yaml` and obtain the full current `git rev-parse HEAD` as `base_commit`. Create a unique `claim_id` and a Git work branch for this agent. Call TCA `submit_claim` with `claim_id`, `project_id`, `author` (the local agent ID), `base_commit`, `work_branch`, `goal`, and `planned_paths`; add `owned_symbols`, `behavior_contracts`, `coordination_group`, and `expected_group_size` when relevant. Local mode submits directly through MCP and needs no Claim branch or webhook.
+2. Read `project_id` from `.tca/project.yaml`. Fetch the latest default branch when a remote exists, select the Git baseline for your own work branch, and record its full SHA as `base_commit`. Create a unique `claim_id` and work branch. Call TCA `submit_claim` with `claim_id`, `project_id`, `author` (the local agent ID), `base_commit`, `work_branch`, `goal`, and `planned_paths`; add `owned_symbols`, `behavior_contracts`, `coordination_group`, and `expected_group_size` when relevant. Both local and hosted deployments submit directly through MCP; neither needs a Claim branch or Claim webhook.
 3. Call `wait_for_decision`. Read the returned constraints and `allowed_actions`. Call `start_execution` only when it is allowed. If coordination is pending, wait or ask the manager to process it. Do not infer permission from a previous chat.
 4. Work only in your own branch/worktree. Respect the ownership and interface contract. Report progress during long work; use `publish_handoff` for a stable interface needed by another agent.
-5. Run appropriate checks, commit the result, then call `complete_claim`. Tell the user the branch, commit, checks, and any remaining integration work. A completed claim is not yet merged.
+5. Run appropriate checks, commit and push the result when a remote exists, then call `complete_claim`. Tell the user the branch, commit, checks, and any remaining integration work. A completed claim is not yet merged.
 
 If TCA MCP is unavailable, stop before shared edits and report the connection problem. If the task has no remote, use local Git branches; do not claim to have pushed or integrated anything.
 

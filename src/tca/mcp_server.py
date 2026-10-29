@@ -93,6 +93,20 @@ def create_mcp(controller: Controller | None = None, access: ProjectAccess | Non
         return controller.get_claim_state(project_id, claim_id)
 
     @mcp.tool()
+    def list_claim_revisions(project_id: str, claim_id: str) -> list[dict[str, object]]:
+        """For project members: read the preserved history of Claim submissions."""
+        if access:
+            access.role(project_id)
+        return controller.store.list_claim_revisions(project_id.lower(), claim_id)
+
+    @mcp.tool()
+    def list_claim_events(project_id: str, claim_id: str) -> list[dict[str, object]]:
+        """For project members: read Claim submissions and state transitions."""
+        if access:
+            access.role(project_id)
+        return controller.store.list_claim_events(project_id.lower(), claim_id)
+
+    @mcp.tool()
     async def wait_for_decision(
         project_id: str,
         claim_id: str,
@@ -199,9 +213,9 @@ def create_mcp(controller: Controller | None = None, access: ProjectAccess | Non
 
     @mcp.tool()
     def integrate_claim(project_id: str, claim_id: str) -> dict[str, object]:
-        """Fallback: confirm integration when no webhook can prove branch ancestry."""
+        """Project creator fallback: confirm integration after checking Git history."""
         if access:
-            access.require(project_id, "m")
+            access.require_project_admin(project_id)
         return controller.integrate_claim(project_id, claim_id).to_mapping()
 
     @mcp.tool()

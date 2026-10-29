@@ -3,4 +3,4 @@ project_id: replace-with-owner/repo
 
 mcp:
   url: https://replace-with-tca-server.example.com/mcp
-  token_env: TCA_API_TOKEN
+  token_env: TCA_TOKEN

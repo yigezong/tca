@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
+import hashlib
 import io
 import json
 import os
@@ -18,6 +20,8 @@ from importlib.resources import files
 from pathlib import Path
 
 import yaml
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
@@ -176,14 +180,26 @@ def setup(args: argparse.Namespace) -> None:
     project_text = yaml.safe_dump(project, sort_keys=False, allow_unicode=True)
     skill_path = repo / ".agents" / "skills" / "tca-coordination" / "SKILL.md"
     identity_path = repo / ".tca" / "agent-id"
-    replacing_local = (
+    migrating_config = (
         getattr(args, "replace_local_config", False)
         and args.mode == "remote"
         and isinstance(existing_project, dict)
-        and existing_project.get("mode") == "local"
         and str(existing_project.get("project_id", "")).lower() == project_id.lower()
+        and (
+            existing_project.get("mode") == "local"
+            or (
+                existing_project.get("mode") == "remote"
+                and existing_project.get("mcp", {}).get("url") == args.server_url
+                and existing_project.get("mcp", {}).get("token_env")
+                    in {"TCA_GITHUB_TOKEN", "TCA_API_TOKEN"}
+            )
+        )
     )
-    overwrite_paths = {project_path, identity_path} if replacing_local else set()
+    overwrite_paths = {project_path, identity_path} if migrating_config else set()
+    if migrating_config and skill_path.exists():
+        existing_skill = skill_path.read_text(encoding="utf-8")
+        if existing_skill.startswith("---\nname: tca-coordination\n") and "# TCA in Codex" in existing_skill:
+            overwrite_paths.add(skill_path)
     for path, content in ((project_path, project_text), (skill_path, skill_text()),
                           (identity_path, args.agent_id + "\n")):
         if path.exists() and path.read_text(encoding="utf-8") != content and path not in overwrite_paths:
@@ -197,7 +213,10 @@ def setup(args: argparse.Namespace) -> None:
         project_path.write_text(project_text, encoding="utf-8")
     else:
         ensure_file(project_path, project_text)
-    ensure_file(skill_path, skill_text())
+    if skill_path in overwrite_paths:
+        skill_path.write_text(skill_text(), encoding="utf-8")
+    else:
+        ensure_file(skill_path, skill_text())
     if identity_path in overwrite_paths:
         identity_path.write_text(args.agent_id + "\n", encoding="utf-8")
     else:
@@ -250,11 +269,11 @@ def doctor(args: argparse.Namespace) -> int:
     elif mode == "remote" and current.get("url") != config.get("mcp", {}).get("url"):
         issues.append("Codex TCA MCP URL differs from project configuration")
     elif mode == "remote":
-        token_env = config.get("mcp", {}).get("token_env", "TCA_API_TOKEN")
+        token_env = config.get("mcp", {}).get("token_env", "TCA_TOKEN")
         token = os.getenv(token_env, "")
         if not token:
             issues.append("TCA token environment variable is unavailable to this shell")
-        elif token_env == "TCA_GITHUB_TOKEN":
+        elif token_env == "TCA_TOKEN":
             try:
                 project_id = config.get("project_id", "")
                 joined = _project_api(
@@ -265,24 +284,82 @@ def doctor(args: argparse.Namespace) -> int:
                 if joined.get("agent_id") != identity:
                     issues.append("local agent identity differs from GitHub project role")
             except (SetupError, OSError, KeyError) as exc:
-                issues.append(f"GitHub project access check failed: {exc}")
+                issues.append(f"TCA project access check failed: {exc}")
+        else:
+            issues.append("remote project uses a legacy token variable; migrate to TCA_TOKEN")
     for issue in issues:
         print("FAIL:", issue)
     if not issues:
         print(f"OK: Codex login, TCA MCP, skill, project, and identity for {repo}")
         if mode == "remote":
-            print("Remote project access verified." if config.get("mcp", {}).get("token_env") == "TCA_GITHUB_TOKEN"
+            print("Remote project access verified." if config.get("mcp", {}).get("token_env") == "TCA_TOKEN"
                   else "Remote connectivity and token validity were not tested.")
     return bool(issues)
 
 
-def _github_token(token_env: str) -> str:
+def _session_path(server_url: str) -> Path:
+    digest = hashlib.sha256(server_url.encode()).hexdigest()[:24]
+    return Path.home() / ".tca" / "sessions" / f"{digest}.json"
+
+
+def _write_secret(path: Path, content: bytes) -> None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(path, flags, 0o600)
+    with os.fdopen(descriptor, "wb") as output:
+        os.fchmod(descriptor, 0o600)
+        output.write(content)
+
+
+def _tca_token(server_url: str, token_env: str) -> str:
     token = os.getenv(token_env, "").strip()
-    if not token and shutil.which("gh"):
-        token = run("gh", "auth", "token", check=False).stdout.strip()
     if not token:
-        raise SetupError(f"Set {token_env} or sign in with 'gh auth login'")
+        path = _session_path(server_url)
+        if path.exists():
+            token = str(json.loads(path.read_text())["token"])
+    if not token.startswith("tca_"):
+        raise SetupError("Run 'tca-codex login --server-url URL --login GITHUB_LOGIN' first")
     return token
+
+
+def login_command(args: argparse.Namespace) -> None:
+    key_path = args.key_path.expanduser().resolve()
+    key_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if not key_path.exists():
+        key = ed25519.Ed25519PrivateKey.generate()
+        _write_secret(key_path, key.private_bytes(
+            serialization.Encoding.PEM, serialization.PrivateFormat.OpenSSH,
+            serialization.NoEncryption(),
+        ))
+    else:
+        key = serialization.load_ssh_private_key(key_path.read_bytes(), password=None)
+        if not isinstance(key, ed25519.Ed25519PrivateKey):
+            raise SetupError("TCA login requires an Ed25519 SSH key")
+    public_key = key.public_key().public_bytes(
+        serialization.Encoding.OpenSSH, serialization.PublicFormat.OpenSSH
+    ).decode()
+    challenge = _project_api(args.server_url, "", "/api/auth/challenge",
+                             {"login": args.login})
+    signed = f"tca-login-v1\n{challenge['challenge_id']}\n{challenge['nonce']}".encode()
+    try:
+        response = _project_api(args.server_url, "", "/api/auth/login", {
+            "login": args.login, "challenge_id": challenge["challenge_id"],
+            "public_key": public_key,
+            "signature": base64.b64encode(key.sign(signed)).decode(),
+        })
+    except SetupError as exc:
+        if "SSH public key is not registered on GitHub" in str(exc):
+            raise SetupError(
+                "Add this public key to https://github.com/settings/keys, then retry:\n"
+                + public_key
+            ) from exc
+        raise
+    path = _session_path(args.server_url)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    _write_secret(path, json.dumps(response).encode())
+    print(f"TCA login complete for {response['login']}; session expires at {response['expires_at']}.")
+    print(f"To expose the TCA-only session to Codex: export TCA_TOKEN=\"$(tca-codex token --server-url {args.server_url})\"")
 
 
 def _project_api(server_url: str, token: str, path: str,
@@ -290,7 +367,9 @@ def _project_api(server_url: str, token: str, path: str,
     if not server_url.startswith("https://") or not server_url.endswith("/mcp"):
         raise SetupError("server URL must be an https://.../mcp endpoint")
     url = server_url.removesuffix("/mcp") + path
-    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    headers = {"Accept": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     if body is not None:
         headers["Content-Type"] = "application/json"
     request = urllib.request.Request(
@@ -311,7 +390,7 @@ def _project_api(server_url: str, token: str, path: str,
 
 
 def project_command(args: argparse.Namespace) -> None:
-    token = _github_token(args.token_env)
+    token = _tca_token(args.server_url, args.token_env)
     if args.command == "projects":
         result = _project_api(args.server_url, token, "/api/projects")
         for project in result.get("projects", []):
@@ -329,10 +408,18 @@ def project_command(args: argparse.Namespace) -> None:
     if args.command == "start":
         result = _project_api(args.server_url, token, "/api/projects",
                               {"project_id": project_id})
-        agent_id = "agent-m"
+        agent_id = str(result["agent_id"])
         if repo is None:
-            print(f"Started {project_id} as M. Clone the repo, then run 'tca-codex join --repo PATH' to configure Codex.")
+            print(f"Started {project_id} as {result['role'].upper()}. Clone the repo, then run 'tca-codex join --repo PATH' to configure Codex.")
             return
+    elif args.command == "delegate-m":
+        if repo is None and not requested_id:
+            raise SetupError("delegate-m requires --repo or --project-id")
+        encoded = urllib.parse.quote(project_id, safe="/")
+        result = _project_api(args.server_url, token,
+                              f"/api/projects/{encoded}/manager", {"login": args.login})
+        print(f"M for {project_id} is now {result['manager']}.")
+        return
     else:
         if repo is None:
             raise SetupError("join requires --repo")
@@ -359,25 +446,39 @@ def main() -> None:
     init.add_argument("--project-id")
     init.add_argument("--mode", choices=("local", "remote"), default="local")
     init.add_argument("--server-url", default="")
-    init.add_argument("--token-env", default="TCA_API_TOKEN")
+    init.add_argument("--token-env", default="TCA_TOKEN")
     init.add_argument("--replace-mcp", action="store_true")
     init.add_argument("--replace-local-config", action="store_true")
     check = sub.add_parser("doctor", help="check Codex and TCA setup")
     check.add_argument("--repo", type=Path, default=Path.cwd())
-    for name in ("start", "join", "projects"):
+    login = sub.add_parser("login", help="sign a challenge with a GitHub-listed SSH key")
+    login.add_argument("--server-url", required=True)
+    login.add_argument("--login", required=True)
+    login.add_argument("--key-path", type=Path, default=Path.home() / ".tca" / "identity")
+    session = sub.add_parser("token", help="print the local TCA-only session token")
+    session.add_argument("--server-url", required=True)
+    for name in ("start", "join", "projects", "delegate-m"):
         command = sub.add_parser(name, help=f"GitHub project {name}")
         if name != "projects":
             command.add_argument("--repo", type=Path,
                                  default=Path.cwd() if name == "join" else None)
             command.add_argument("--replace-mcp", action="store_true")
             command.add_argument("--replace-local-config", action="store_true")
-            if name == "start":
+            if name in {"start", "delegate-m"}:
                 command.add_argument("--project-id", help="GitHub owner/repo; no local clone required")
+            if name == "delegate-m":
+                command.add_argument("--login", required=True, help="GitHub login of the new M")
         command.add_argument("--server-url", required=True)
-        command.add_argument("--token-env", default="TCA_GITHUB_TOKEN")
+        command.add_argument("--token-env", default="TCA_TOKEN")
     args = parser.parse_args()
     try:
-        if args.command in {"start", "join", "projects"}:
+        if args.command == "login":
+            login_command(args)
+            return
+        if args.command == "token":
+            print(_tca_token(args.server_url, "TCA_TOKEN"))
+            return
+        if args.command in {"start", "join", "projects", "delegate-m"}:
             project_command(args)
             return
         result = setup(args) if args.command == "init" else doctor(args)

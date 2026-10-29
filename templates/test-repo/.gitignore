@@ -1,4 +1,5 @@
 .env
+.tca/agent-id
 .venv/
 __pycache__/
 .pytest_cache/

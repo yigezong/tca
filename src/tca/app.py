@@ -19,27 +19,31 @@ from .github import GitHubClient, GitHubWebhookHandler, verify_github_signature
 from .mcp_server import create_mcp
 from .rules import BasicRuleChecker
 from .store import build_store
-from .project_access import ProjectAccess, current_principal
+from .project_access import ProjectAccess, TcaIdentity, current_principal
 
 
 class BearerAuthMiddleware:
-    def __init__(self, app, token: str, access: ProjectAccess | None = None) -> None:
+    def __init__(self, app, token: str, access: ProjectAccess | None = None,
+                 identity: TcaIdentity | None = None) -> None:
         self.app = app
         self.token = token
         self.access = access
+        self.identity = identity
 
     async def __call__(self, scope, receive, send) -> None:
         protected = ("/mcp", "/api/")
-        is_protected = scope["type"] == "http" and scope["path"].startswith(protected)
+        is_protected = (scope["type"] == "http"
+                        and scope["path"].startswith(protected)
+                        and scope["path"] not in {"/api/auth/challenge", "/api/auth/login"})
         if is_protected:
             headers = {key.lower(): value for key, value in scope.get("headers", [])}
             authorization = headers.get(b"authorization", b"")
             if self.access:
                 try:
-                    if not authorization.startswith(b"Bearer "):
-                        raise PermissionError("missing GitHub token")
+                    if not authorization.startswith(b"Bearer ") or self.identity is None:
+                        raise PermissionError("missing TCA session token")
                     principal = await asyncio.to_thread(
-                        self.access.github.principal, authorization[7:].decode("ascii")
+                        self.identity.principal, authorization[7:].decode("ascii")
                     )
                 except (PermissionError, UnicodeDecodeError):
                     response = JSONResponse({"error": "unauthorized"}, status_code=401)
@@ -104,7 +108,7 @@ def _bool_env(name: str, default: bool) -> bool:
     return raw not in {"0", "false", "no", "off"}
 
 
-def create_app():
+def create_app(github_override=None):
     auth_mode = os.getenv("TCA_AUTH_MODE", "shared").strip().lower()
     if auth_mode not in {"shared", "github"}:
         raise RuntimeError("TCA_AUTH_MODE must be shared or github")
@@ -113,7 +117,11 @@ def create_app():
         raise RuntimeError("TCA_API_TOKEN is required")
 
     controller, github = build_components()
-    access = ProjectAccess(controller.store) if auth_mode == "github" else None
+    if auth_mode == "github" and github_override is None:
+        if not os.getenv("TCA_GITHUB_APP_ID") or not os.getenv("TCA_GITHUB_APP_PRIVATE_KEY"):
+            raise RuntimeError("GitHub mode requires a metadata-only GitHub App")
+    access = ProjectAccess(controller.store, github_override) if auth_mode == "github" else None
+    identity = TcaIdentity(controller.store, access.github) if access else None
     mcp = create_mcp(controller, access)
     web_dir = Path(__file__).parent / "web"
 
@@ -151,6 +159,67 @@ def create_app():
             started = await asyncio.to_thread(access.start, str(data.get("project_id", "")))
             return JSONResponse(started, status_code=201)
         except (PermissionError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=403)
+
+    async def auth_challenge(request: Request) -> JSONResponse:
+        if identity is None:
+            return JSONResponse({"error": "GitHub project mode is disabled"}, status_code=404)
+        try:
+            return JSONResponse(identity.challenge(str((await request.json()).get("login", ""))))
+        except (PermissionError, ValueError, AttributeError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    async def auth_login(request: Request) -> JSONResponse:
+        if identity is None:
+            return JSONResponse({"error": "GitHub project mode is disabled"}, status_code=404)
+        try:
+            data = await request.json()
+            if not isinstance(data, dict):
+                raise ValueError("login request must be a JSON object")
+            return JSONResponse(await asyncio.to_thread(
+                identity.login, str(data.get("login", "")),
+                str(data.get("challenge_id", "")), str(data.get("public_key", "")),
+                str(data.get("signature", "")),
+            ))
+        except (PermissionError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=401)
+
+    async def delegate_manager(request: Request) -> JSONResponse:
+        if access is None:
+            return JSONResponse({"error": "GitHub project mode is disabled"}, status_code=404)
+        project_id = request.path_params["owner"] + "/" + request.path_params["repo"]
+        try:
+            data = await request.json()
+            if not isinstance(data, dict):
+                raise ValueError("manager request must be a JSON object")
+            return JSONResponse(await asyncio.to_thread(
+                access.delegate_manager, project_id, str(data.get("login", ""))
+            ))
+        except (PermissionError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=403)
+
+    async def claim_revisions(request: Request) -> JSONResponse:
+        if access is None:
+            return JSONResponse({"error": "GitHub project mode is disabled"}, status_code=404)
+        project_id = request.path_params["owner"] + "/" + request.path_params["repo"]
+        try:
+            await asyncio.to_thread(access.role, project_id)
+            return JSONResponse({"revisions": controller.store.list_claim_revisions(
+                project_id.lower(), request.path_params["claim_id"]
+            )})
+        except PermissionError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=403)
+
+    async def claim_events(request: Request) -> JSONResponse:
+        if access is None:
+            return JSONResponse({"error": "GitHub project mode is disabled"}, status_code=404)
+        project_id = request.path_params["owner"] + "/" + request.path_params["repo"]
+        try:
+            await asyncio.to_thread(access.role, project_id)
+            return JSONResponse({"events": controller.store.list_claim_events(
+                project_id.lower(), request.path_params["claim_id"]
+            )})
+        except PermissionError as exc:
             return JSONResponse({"error": str(exc)}, status_code=403)
 
     async def join_project(request: Request) -> JSONResponse:
@@ -208,14 +277,19 @@ def create_app():
             Mount("/static", app=StaticFiles(directory=web_dir)),
             Route("/health", health),
             Route("/api/claims/{claim_id}", get_claim),
+            Route("/api/auth/challenge", auth_challenge, methods=["POST"]),
+            Route("/api/auth/login", auth_login, methods=["POST"]),
             Route("/api/projects", projects, methods=["GET", "POST"]),
             Route("/api/projects/{owner}/{repo}/join", join_project, methods=["POST"]),
+            Route("/api/projects/{owner}/{repo}/manager", delegate_manager, methods=["POST"]),
+            Route("/api/projects/{owner}/{repo}/claims/{claim_id}/revisions", claim_revisions),
+            Route("/api/projects/{owner}/{repo}/claims/{claim_id}/events", claim_events),
             Route("/webhooks/github", github_webhook, methods=["POST"]),
             Mount("/", app=mcp.streamable_http_app()),
         ],
         lifespan=lifespan,
     )
-    return BearerAuthMiddleware(app, token, access)
+    return BearerAuthMiddleware(app, token, access, identity)
 
 
 def main() -> None:

@@ -1,6 +1,6 @@
 import sqlite3
 
-from tca.domain import Claim
+from tca.domain import Claim, ClaimState
 from tca.store import ClaimStore
 
 
@@ -63,6 +63,24 @@ def test_new_claim_must_start_at_version_one() -> None:
             assert "must start at version 1" in str(error)
         else:
             raise AssertionError("new claim version 2 should be rejected")
+    finally:
+        store.close()
+
+
+def test_claim_history_retains_revisions_and_state_transitions() -> None:
+    store = ClaimStore()
+    try:
+        first = make_claim("team/project", "claim-1")
+        store.save_received(first)
+        store.save_received(make_claim("team/project", "claim-1", version=2))
+        store.transition("team/project", "claim-1", {ClaimState.RECEIVED}, ClaimState.APPROVED)
+        revisions = store.list_claim_revisions("team/project", "claim-1")
+        events = store.list_claim_events("team/project", "claim-1")
+        assert [item["version"] for item in revisions] == [1, 2]
+        assert [item["event_type"] for item in events] == [
+            "claim_submitted", "claim_submitted", "state_transition"
+        ]
+        assert events[-1]["payload"]["to"] == "approved"
     finally:
         store.close()
 

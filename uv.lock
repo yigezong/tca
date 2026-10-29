@@ -744,6 +744,7 @@ name = "team-code-agent"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "cryptography" },
     { name = "mcp" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pyyaml" },
@@ -758,6 +759,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=44,<50" },
     { name = "mcp", specifier = ">=1.27,<2" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<4" },
     { name = "pyyaml", specifier = ">=6.0" },

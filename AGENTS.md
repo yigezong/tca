@@ -8,10 +8,9 @@
 
 TCA 协议优先用于独立的被测 repo。配置被测 repo 或在被测 repo 中让 Agent 工作时，必须遵守：
 
-1. 阅读被测 repo 的 `.tca/protocol.md`。
-2. 读取被测 repo 的 `.tca/project.yaml`，确认项目标识、Claim 分支和 TCA MCP 地址。
-3. 修改共享代码前，通过 Git 分支发布 `.tca/claim.yaml`。
-4. 通过 TCA MCP 查询 Claim 状态与 `allowed_actions`。
+1. 阅读被测 repo 的 `.tca/protocol.md` 和 `.tca/project.yaml`。
+2. 修改共享代码前，通过 TCA MCP 的 `submit_claim` 直接申报 Claim，不创建 Claim 分支。
+3. 通过 TCA MCP 查询 Claim 状态与 `allowed_actions`。
 5. 只有 C 返回允许 `start_execution` 时才可开始修改。
 
 完成后调用 `complete_claim`。C 返回的状态是唯一权威状态，不得依据本地上下文自行推断。

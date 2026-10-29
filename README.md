@@ -1,135 +1,95 @@
 # Team Code Agent (TCA)
 
-TCA is a Git-first coordination service for coding agents. Before agents edit a shared repository, TCA records what each agent intends to change, coordinates interfaces and ownership, and tracks when work may start and finish. It keeps code changes in normal Git branches and worktrees.
+TCA coordinates coding agents before they edit a shared Git repository. Developers submit Claims directly to the TCA MCP server, wait for an authoritative decision, work in their own Git branches, and report completion. Git holds code history; TCA holds coordination history.
 
 - [中文说明](README_zh.md)
-- [Codex native setup (Chinese)](docs/codex-native.md)
-- [Operations guide (Chinese)](docs/tca-guide.md)
-- [End-to-end demo video](docs/assets/tca-process-demo.mp4)
+- [Codex setup](docs/codex-native.md)
+- [Protocol guide](docs/tca-guide.md)
+- [GitHub App setup](docs/github-app-setup.md)
+- [Demo video](docs/assets/tca-process-demo.mp4)
 
-The 64-second demo shows an M agent reading A1/A2 claims, parallel development, Git integration, and joint acceptance. It also retains a real merge conflict and a follow-up repair, so it does not claim that TCA eliminates conflicts or always reduces total elapsed time.
+## One protocol, two deployments
 
-## Roles
+| Deployment | State | Authentication |
+| --- | --- | --- |
+| One computer | Local SQLite, shared by separate worktrees | Local OS user; no cross-user isolation |
+| Multiple computers | Hosted TCA Server with Postgres | GitHub-listed Ed25519 SSH key at login, then a short-lived TCA-only session |
 
-| Role | Responsibility |
-| --- | --- |
-| C / TCA Server | Authoritative claim state, coordination queue, and access control |
-| A / Developer agent | Publishes a claim, waits for permission, edits its own branch, and reports completion |
-| M / Manager agent | Reads claims and repository context, then publishes advice and a coordination decision; it does not edit business code |
-| Integrator | Merges completed work through the team's normal Git process |
+Both deployments use the same Claim sequence: submit_claim → wait_for_decision → start_execution → edit/commit/push → complete_claim. No Claim branch or Claim webhook is required. A completed Claim is ready for integration; it is not yet merged.
 
-## Quick start: use TCA from Codex
+The repository creator starts a TCA project and can delegate the single M role to another repository member. M reads Claims and code and advises developers; M does not commit business code. Developers with repository write access can join as A. The server rechecks repository permissions on every project operation.
 
-TCA's local preview uses Codex's existing login and model settings. It needs no model API key, hosted TCA service, PostgreSQL, webhook, or demo web app.
+## Local Codex setup
 
-From the TCA source checkout, initialize a Git repository:
+From this source checkout:
 
-```bash
+~~~bash
 sh scripts/install-codex.sh /absolute/path/to/your-git-repo
-```
+~~~
 
-The installer registers a local `tca_local` MCP server and adds repository guidance. Then restart the Codex task so it loads the new MCP server and instructions. See [the setup guide](docs/codex-native.md) for details and troubleshooting.
+This registers a local MCP server and installs repository guidance. Commit the generated shared guidance, keep .tca/agent-id local, and open a new Codex task. Run one A per computer, optionally alongside one M in a separate worktree. Local mode does not authenticate different humans and is not a multi-computer service.
 
-### One computer: one A, optionally one M
+## Hosted setup
 
-Use at most one developer agent A on a computer because it uses that computer's configured GitHub identity. You can run one M on the same computer; M is read-only and does not push or commit business code. Run A and M in separate worktrees, sharing the local SQLite coordination database. In Codex, keep one project for the business repository and create separate A and M conversations under that repository.
+Create a GitHub App with repository Metadata: read access, install it only on repositories that use TCA, and generate an App private key. The App is used to check current collaborator permissions. It does not need Contents or write access. Set these server variables:
 
-For teams with multiple developers, each developer computer runs one A and connects to the same remote TCA Server. Do not model two GitHub identities as two local A agents on one computer.
-
-## Coordination timing
-
-For a declared group (`coordination_group` and `expected_group_size > 1`), TCA waits for the group claims if no member has started execution. M sees the full group and publishes advice and a decision for each A. A cannot start while another group claim is still awaiting M's decision.
-
-If A1 is already executing when A2 submits, TCA leaves A1 untouched. M sees the active context, but publishes guidance and a decision only for the new A2 claim. This keeps the later submission asynchronous without interrupting work already in progress.
-
-Use the same `coordination_group` for claims that belong together. When two claims are expected before work starts, set `expected_group_size: 2`; TCA holds the first claim until its peer arrives. If A2 appears after A1 is approved but before A1 starts, TCA reopens A1 for group review so M can advise both. If A1 is already executing, TCA leaves it alone and asks M to advise only A2. Independent work should use the default group size of one.
-
-## Architecture
-
-```text
-Developer Codex (A) ── MCP ──┐
-Manager Codex (M) ───── MCP ──┼── TCA Controller ── SQLite (local) / Postgres (server)
-GitHub push/webhook ──────────┘
-```
-
-The local preview stores coordination state in `~/.tca/coordination.db`. A remote deployment uses PostgreSQL and can authenticate each member with GitHub. The older shared-token mode remains available for trusted teams. A `completed` claim means the branch is ready to integrate; it does not mean it has been merged.
-
-## Run the server locally
-
-```bash
-uv sync
-uv run pytest
-uv run tca-app
-```
-
-Open `http://localhost:8000/` for the project page and claim status view.
-
-## Deploy the shared server
-
-For cross-computer teams, deploy this repository and configure:
-
-```bash
+~~~bash
 TCA_AUTH_MODE=github
-DATABASE_URL=replace-with-postgres-url
+DATABASE_URL=postgresql://...
 TCA_ALLOWED_HOSTS=tca.example.com
-```
+TCA_GITHUB_APP_ID=your-app-id
+TCA_GITHUB_APP_PRIVATE_KEY=your-app-private-key-pem
+~~~
 
-The server verifies the caller's GitHub identity and repository permissions on each operation. The person starting a project needs admin access to its GitHub repository and becomes that project's M. Other users with write access can join independently; each is bound to one `agent-<GitHub login>` A identity and at most one active Claim per project. Editing a local agent ID cannot impersonate another user or M. See the [GitHub repository API](https://docs.github.com/en/rest/repos/repos) for the permission fields used.
-For automatic integration confirmation on default-branch pushes, also configure `GITHUB_WEBHOOK_SECRET` and `GITHUB_TOKEN` and install a signed webhook on the business repository. Otherwise M can verify the merge and call `integrate_claim`.
+Deploy with uv run tca-app. Protect the App private key and database as server secrets. TCA does not accept a user's GitHub personal token as an MCP credential. In particular, never export the output of gh auth token as TCA_TOKEN.
 
-Until a package is published, install the CLI from this source checkout. Sign in with `gh auth login`, then make your GitHub token available to Codex when it starts:
+Each person installs the CLI from this checkout and logs in with a GitHub-listed Ed25519 SSH key:
 
-```bash
-git clone https://github.com/yigezong/tca.git
-cd tca
+~~~bash
 uv tool install --python 3.12 .
-gh auth login
-export TCA_GITHUB_TOKEN="$(gh auth token)"
-```
+tca-codex login --server-url https://tca.example.com/mcp --login YOUR_GITHUB_LOGIN
+~~~
 
-**Repository owner: start any repository you administer:**
+On first login, the CLI creates a dedicated key in ~/.tca/identity. If GitHub does not yet list its public key, the CLI prints the key and asks you to add it at https://github.com/settings/keys; retry login afterward. The private key stays on your computer. Login signs a one-time challenge and stores an eight-hour TCA-only session in ~/.tca/sessions with owner-only file permissions. The server stores only its token hash.
 
-```bash
-tca-codex start --repo /absolute/path/to/repo \
-  --server-url https://tca.example.com/mcp
-tca-codex doctor --repo /absolute/path/to/repo
-```
+Make this session available to Codex when it starts:
 
-`start` uses the repository's GitHub `origin`, registers the project, and configures this worktree as M. M reads code and coordinates claims but does not commit business code. Start a separate project for each repository you administer.
+~~~bash
+export TCA_TOKEN="$(tca-codex token --server-url https://tca.example.com/mcp)"
+~~~
 
-To start a repository before cloning it, use `tca-codex start --project-id owner/repo --server-url https://tca.example.com/mcp`. Clone later and run `tca-codex join --repo /path/to/repo --server-url https://tca.example.com/mcp` to configure the owner's M worktree.
+If Codex Desktop does not inherit terminal variables, set TCA_TOKEN in its launch environment before opening a new task. This token only authorizes TCA operations; it is not a GitHub or model API key.
 
-**Developer: find and join accessible projects:**
+The repository creator, who needs GitHub admin permission, starts any installed repository:
 
-```bash
+~~~bash
+tca-codex start --repo /absolute/path/to/repo --server-url https://tca.example.com/mcp
+~~~
+
+The creator can delegate M to a member who has repository read access:
+
+~~~bash
+tca-codex delegate-m --project-id OWNER/REPO --login MANAGER_GITHUB_LOGIN --server-url https://tca.example.com/mcp
+~~~
+
+The new M logs in and joins from a separate read-only worktree. Other developers with write access log in and join from their own computers:
+
+~~~bash
 tca-codex projects --server-url https://tca.example.com/mcp
-tca-codex join --repo /absolute/path/to/cloned-repo \
-  --server-url https://tca.example.com/mcp
-tca-codex doctor --repo /absolute/path/to/cloned-repo
-```
+tca-codex join --repo /absolute/path/to/repo --server-url https://tca.example.com/mcp
+tca-codex doctor --repo /absolute/path/to/repo
+~~~
 
-`projects` lists started projects the signed-in GitHub user can access. `join` requires repository write access and configures the user's sole A identity. Each developer uses their own computer and GitHub account. Keep `TCA_GITHUB_TOKEN` out of Git; it is a repository access credential, not a model API key. Commit shared project guidance, while `.tca/agent-id` remains local to each worktree. GitHub mode accepts claims through authenticated MCP; signed default-branch webhooks can still confirm integration, but webhook Claim submission is disabled.
+A project member can inspect Claim history through the MCP tools list_claim_revisions and list_claim_events. These are append-only application records in the TCA database; they are not an immutable external notarization. Claims are visible to authorized TCA project members, and the server operator can access the database. Do not put secrets in Claims.
 
-If the repository was initialized in local preview mode, add `--replace-local-config` to `start` or `join` to migrate this project's `.tca/project.yaml` and the current worktree's `.tca/agent-id`. Other differing files remain protected. Run the owner's migration in a separate M worktree.
+**Migrating an existing remote project:** install the GitHub App and deploy the updated server first. Each member runs tca-codex login, exports TCA_TOKEN, then runs start or join with --replace-local-config --replace-mcp to replace the old token environment name in that worktree. The project database keeps existing Claims; older revisions that were overwritten before this version cannot be recovered. The migration records each existing Claim's current snapshot.
 
-### Legacy shared-token deployment
+## Git integration
 
-For a single trusted team, configure:
+A writes code to its own Git work branch. A calls complete_claim after committing and pushing. The team's integrator merges normally. The project creator can verify the result and call integrate_claim. Optional signed GitHub push webhooks remain a compatibility integration signal; they are not the Claim submission path. Enabling the legacy webhook reader may require extra repository access and is not needed for the standard flow.
 
-```bash
-TCA_API_TOKEN=replace-with-random-token
-DATABASE_URL=replace-with-postgres-url
-TCA_ALLOWED_HOSTS=tca.example.com
-```
+Older shared-token and Claim-webhook implementations remain in the code for existing trusted deployments; they are not the hosted onboarding path. Do not copy the old protocol into new repositories.
 
-For GitHub integration, also set `GITHUB_WEBHOOK_SECRET` and `GITHUB_TOKEN`. A remote client uses `TCA_API_TOKEN`; this is a TCA service credential, not a model API key.
+## Verification
 
-The shared-token mode does not provide project-level authorization. Use GitHub mode above for independent repository permissions.
-
-## Current limitations
-
-- The native installer currently targets macOS and Linux and requires downloading the TCA source checkout.
-- M is a normal Codex task and must be started by a person; it is not a background daemon.
-- Local SQLite coordinates agents on one computer only. Cross-computer teams need a shared TCA Server.
-- The end-to-end video is a recorded demonstration, not a performance guarantee.
-- The GitHub authorization flow has automated tests, but still needs a live two-computer deployment check.
+Run uv sync and uv run pytest. The test suite covers the controller, SSH challenge replay, TCA session authentication, metadata-only GitHub App permission checks, M delegation, Claim history, and local/hosted API behavior. A live GitHub App installation and multi-computer deployment still require an integration check in the target environment.

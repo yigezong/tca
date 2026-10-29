@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 import sqlite3
 import threading
 from datetime import UTC, datetime, timedelta
@@ -36,11 +37,40 @@ class ClaimStore:
     def _ensure_schema(self) -> None:
         self._connection.execute("""CREATE TABLE IF NOT EXISTS projects (
             project_id TEXT PRIMARY KEY, owner_login TEXT NOT NULL,
-            created_at TEXT NOT NULL)""")
+            created_at TEXT NOT NULL, manager_login TEXT)""")
+        project_columns = {row["name"] for row in self._connection.execute("PRAGMA table_info(projects)")}
+        if "manager_login" not in project_columns:
+            self._connection.execute("ALTER TABLE projects ADD COLUMN manager_login TEXT")
+        self._connection.execute("UPDATE projects SET manager_login = owner_login WHERE manager_login IS NULL")
+        self._connection.execute("""CREATE TABLE IF NOT EXISTS auth_challenges (
+            challenge_id TEXT PRIMARY KEY, login TEXT NOT NULL, nonce TEXT NOT NULL,
+            expires_at TEXT NOT NULL)""")
+        self._connection.execute("""CREATE TABLE IF NOT EXISTS auth_sessions (
+            token_hash TEXT PRIMARY KEY, login TEXT NOT NULL, expires_at TEXT NOT NULL)""")
+        self._connection.execute("""CREATE TABLE IF NOT EXISTS claim_revisions (
+            project_id TEXT NOT NULL, claim_id TEXT NOT NULL, version INTEGER NOT NULL,
+            payload TEXT NOT NULL, submitted_at TEXT NOT NULL,
+            PRIMARY KEY (project_id, claim_id, version))""")
+        self._connection.execute("""CREATE TABLE IF NOT EXISTS claim_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT NOT NULL,
+            claim_id TEXT NOT NULL, event_type TEXT NOT NULL, actor TEXT NOT NULL,
+            payload TEXT NOT NULL, created_at TEXT NOT NULL)""")
         self._connection.execute("""CREATE TABLE IF NOT EXISTS project_agent_slots (
             project_id TEXT NOT NULL, author TEXT NOT NULL, claim_id TEXT NOT NULL,
             PRIMARY KEY (project_id, author))""")
         self._ensure_claims_table()
+        self._connection.execute("""INSERT OR IGNORE INTO claim_revisions
+            (project_id, claim_id, version, payload, submitted_at)
+            SELECT project_id, claim_id, claim_version, payload, updated_at FROM claims""")
+        self._connection.execute("""INSERT INTO claim_events
+            (project_id, claim_id, event_type, actor, payload, created_at)
+            SELECT c.project_id, c.claim_id, 'legacy_snapshot', 'migration',
+                   json_object('state', c.state, 'claim', json(c.payload),
+                               'decision', json(c.decision)),
+                   c.updated_at
+            FROM claims c WHERE NOT EXISTS (
+                SELECT 1 FROM claim_events e
+                WHERE e.project_id = c.project_id AND e.claim_id = c.claim_id)""")
         self._ensure_coordination_tasks_table()
         self._connection.execute("""CREATE TABLE IF NOT EXISTS subgoal_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT NOT NULL,
@@ -179,9 +209,9 @@ class ClaimStore:
     def create_project(self, project_id: str, owner_login: str) -> None:
         with self._lock, self._connection:
             self._connection.execute(
-                """INSERT INTO projects(project_id, owner_login, created_at)
-                VALUES (?, ?, ?) ON CONFLICT(project_id) DO NOTHING""",
-                (project_id, owner_login, _now()),
+                """INSERT INTO projects(project_id, owner_login, created_at, manager_login)
+                VALUES (?, ?, ?, ?) ON CONFLICT(project_id) DO NOTHING""",
+                (project_id, owner_login, _now(), owner_login),
             )
             if self.project_owner(project_id).lower() != owner_login.lower():
                 raise PermissionError("project is already owned by another GitHub user")
@@ -192,6 +222,89 @@ class ClaimStore:
                 "SELECT owner_login FROM projects WHERE project_id = ?", (project_id,)
             ).fetchone()
             return str(row["owner_login"]) if row else None
+
+    def project_manager(self, project_id: str) -> str | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT manager_login FROM projects WHERE project_id = ?", (project_id,)
+            ).fetchone()
+        return str(row["manager_login"]) if row else None
+
+    def set_project_manager(self, project_id: str, login: str) -> None:
+        with self._lock, self._connection:
+            result = self._connection.execute(
+                "UPDATE projects SET manager_login = ? WHERE project_id = ?", (login, project_id)
+            )
+            if result.rowcount != 1:
+                raise KeyError(project_id)
+
+    def create_auth_challenge(self, login: str) -> dict:
+        challenge_id, nonce = secrets.token_urlsafe(16), secrets.token_urlsafe(32)
+        expires_at = (datetime.now(UTC) + timedelta(minutes=5)).isoformat()
+        with self._lock, self._connection:
+            self._connection.execute("DELETE FROM auth_challenges WHERE expires_at <= ?", (_now(),))
+            count = self._connection.execute(
+                "SELECT COUNT(*) FROM auth_challenges WHERE login = ?", (login,)
+            ).fetchone()[0]
+            if count >= 5:
+                raise PermissionError("too many pending login challenges")
+            self._connection.execute(
+                "INSERT INTO auth_challenges VALUES (?, ?, ?, ?)",
+                (challenge_id, login, nonce, expires_at),
+            )
+        return {"challenge_id": challenge_id, "nonce": nonce, "expires_at": expires_at}
+
+    def consume_auth_challenge(self, challenge_id: str, login: str) -> str | None:
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                "SELECT nonce, expires_at FROM auth_challenges WHERE challenge_id = ? AND login = ?",
+                (challenge_id, login),
+            ).fetchone()
+            self._connection.execute("DELETE FROM auth_challenges WHERE challenge_id = ?", (challenge_id,))
+        if row and datetime.fromisoformat(row["expires_at"]) > datetime.now(UTC):
+            return str(row["nonce"])
+        return None
+
+    def create_auth_session(self, token_hash: str, login: str) -> str:
+        expires_at = (datetime.now(UTC) + timedelta(hours=8)).isoformat()
+        with self._lock, self._connection:
+            self._connection.execute("DELETE FROM auth_sessions WHERE expires_at <= ?", (_now(),))
+            self._connection.execute(
+                "INSERT INTO auth_sessions VALUES (?, ?, ?)",
+                (token_hash, login, expires_at),
+            )
+        return expires_at
+
+    def auth_session_login(self, token_hash: str) -> str | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT login, expires_at FROM auth_sessions WHERE token_hash = ?",
+                (token_hash,),
+            ).fetchone()
+        if row and datetime.fromisoformat(row["expires_at"]) > datetime.now(UTC):
+            return str(row["login"])
+        return None
+
+    def list_claim_revisions(self, project_id: str, claim_id: str) -> list[dict]:
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT version, payload, submitted_at FROM claim_revisions
+                WHERE project_id = ? AND claim_id = ? ORDER BY version""",
+                (project_id, claim_id),
+            ).fetchall()
+        return [{"version": row["version"], "claim": json.loads(row["payload"]),
+                 "submitted_at": row["submitted_at"]} for row in rows]
+
+    def list_claim_events(self, project_id: str, claim_id: str) -> list[dict]:
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT event_type, actor, payload, created_at FROM claim_events
+                WHERE project_id = ? AND claim_id = ? ORDER BY id""",
+                (project_id, claim_id),
+            ).fetchall()
+        return [{"event_type": row["event_type"], "actor": row["actor"],
+                 "payload": json.loads(row["payload"]), "created_at": row["created_at"]}
+                for row in rows]
 
     def list_projects(self) -> list[tuple[str, str]]:
         with self._lock:
@@ -286,6 +399,18 @@ class ClaimStore:
                         claim.claim_id,
                     ),
                 )
+            self._connection.execute(
+                """INSERT INTO claim_revisions(project_id, claim_id, version, payload, submitted_at)
+                VALUES (?, ?, ?, ?, ?)""",
+                (claim.project_id, claim.claim_id, claim.version,
+                 json.dumps(claim.to_mapping()), now),
+            )
+            self._connection.execute(
+                """INSERT INTO claim_events(project_id, claim_id, event_type, actor, payload, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)""",
+                (claim.project_id, claim.claim_id, "claim_submitted", claim.author,
+                 json.dumps(claim.to_mapping()), now),
+            )
         return self.get(claim.project_id, claim.claim_id)
 
     def transition(
@@ -311,6 +436,7 @@ class ClaimStore:
                 )
             revision = row["revision"] + 1
             encoded_decision = json.dumps(decision.to_mapping()) if decision else None
+            now = _now()
             self._connection.execute(
                 """UPDATE claims SET state = ?, revision = ?,
                 decision = COALESCE(?, decision), updated_at = ?
@@ -319,10 +445,17 @@ class ClaimStore:
                     target.value,
                     revision,
                     encoded_decision,
-                    _now(),
+                    now,
                     project_id,
                     claim_id,
                 ),
+            )
+            self._connection.execute(
+                """INSERT INTO claim_events(project_id, claim_id, event_type, actor, payload, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)""",
+                (project_id, claim_id, "state_transition", "controller",
+                 json.dumps({"from": current.value, "to": target.value,
+                             "decision": decision.to_mapping() if decision else None}), now),
             )
         return self.get(project_id, claim_id)
 
