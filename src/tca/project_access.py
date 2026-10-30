@@ -45,9 +45,11 @@ class GitHubAccess:
         self.app_id = app_id or os.getenv("TCA_GITHUB_APP_ID", "")
         self.private_key = private_key or os.getenv("TCA_GITHUB_APP_PRIVATE_KEY", "").replace("\\n", "\n")
         self._installation_tokens: dict[str, tuple[str, float]] = {}
+        self._public_key_token: tuple[str, float] | None = None
         self._lock = threading.RLock()
 
-    def _request(self, path: str, token: str = "", body: dict | None = None) -> dict:
+    def _request(self, path: str, token: str = "", body: dict | None = None,
+                 *, expect_list: bool = False) -> dict | list:
         headers = {
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
@@ -68,22 +70,39 @@ class GitHubAccess:
                 value = json.load(response)
         except (urllib.error.HTTPError, urllib.error.URLError) as exc:
             raise PermissionError("GitHub identity or repository access could not be verified") from exc
-        if not isinstance(value, dict):
+        if not isinstance(value, list if expect_list else dict):
             raise PermissionError("invalid GitHub identity response")
         return value
 
     def public_keys(self, login: str) -> list[str]:
         if not re.fullmatch(r"[A-Za-z0-9-]+", login):
             raise PermissionError("invalid GitHub login")
-        request = urllib.request.Request(
-            "https://api.github.com/users/" + urllib.parse.quote(login) + "/keys",
-            headers={"Accept": "application/vnd.github+json", "User-Agent": "team-code-agent/0.1"},
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=10) as response:
-                keys = json.load(response)
-        except (urllib.error.HTTPError, urllib.error.URLError) as exc:
-            raise PermissionError("GitHub public keys could not be verified") from exc
+        # Anonymous GitHub API calls share a small IP-wide rate limit. Authenticate
+        # even this public lookup so one busy host cannot prevent every login.
+        with self._lock:
+            cached = self._public_key_token
+            if cached and cached[1] > time.time() + 60:
+                token = cached[0]
+            else:
+                jwt = self._app_jwt()
+                installations = self._request("/app/installations?per_page=1", jwt,
+                                              expect_list=True)
+                installation_id = installations[0].get("id") if installations else None
+                if not isinstance(installation_id, int):
+                    raise PermissionError("GitHub App has no active installation")
+                issued = self._request(
+                    f"/app/installations/{installation_id}/access_tokens", jwt,
+                    {"permissions": {"metadata": "read"}},
+                )
+                token, expires = issued.get("token"), issued.get("expires_at")
+                if not isinstance(token, str) or not isinstance(expires, str):
+                    raise PermissionError("GitHub App installation token unavailable")
+                from datetime import datetime
+                self._public_key_token = (
+                    token, datetime.fromisoformat(expires.replace("Z", "+00:00")).timestamp()
+                )
+        keys = self._request("/users/" + urllib.parse.quote(login) + "/keys",
+                             token, expect_list=True)
         if not isinstance(keys, list):
             raise PermissionError("invalid GitHub public key response")
         return [item["key"] for item in keys if isinstance(item, dict) and isinstance(item.get("key"), str)]

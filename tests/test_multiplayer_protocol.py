@@ -11,6 +11,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 from starlette.testclient import TestClient
 
 from tca.app import create_app
+from tca.project_access import GitHubAccess
 
 
 class Repository:
@@ -29,6 +30,33 @@ class Repository:
             "push": principal.login in {"a1", "a2"},
             "pull": principal.login in {"owner", "manager", "a1", "a2"},
         }
+
+
+def test_public_keys_use_app_authentication(monkeypatch) -> None:
+    """A shared host can exhaust GitHub's anonymous IP-wide API limit."""
+    access = GitHubAccess("app-id", "unused")
+    monkeypatch.setattr(access, "_app_jwt", lambda: "app-jwt")
+    calls = []
+
+    def request(path, token="", body=None, *, expect_list=False):
+        calls.append((path, token, body, expect_list))
+        if path == "/app/installations?per_page=1":
+            return [{"id": 123}]
+        if path == "/app/installations/123/access_tokens":
+            return {"token": "installation-token", "expires_at": "2099-01-01T00:00:00Z"}
+        if path == "/users/owner/keys":
+            return [{"key": "ssh-ed25519 key-material"}]
+        raise AssertionError(path)
+
+    monkeypatch.setattr(access, "_request", request)
+    assert access.public_keys("owner") == ["ssh-ed25519 key-material"]
+    assert access.public_keys("owner") == ["ssh-ed25519 key-material"]
+    assert calls[0] == ("/app/installations?per_page=1", "app-jwt", None, True)
+    assert calls[1] == ("/app/installations/123/access_tokens", "app-jwt",
+                        {"permissions": {"metadata": "read"}}, False)
+    assert all(token == "installation-token" for path, token, _, _ in calls
+               if path == "/users/owner/keys")
+    assert len([path for path, _, _, _ in calls if path.endswith("/access_tokens")]) == 1
 
 
 def test_separate_people_and_tokens_over_hosted_http(monkeypatch, tmp_path) -> None:
