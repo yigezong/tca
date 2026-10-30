@@ -6,6 +6,7 @@ TCA coordinates coding agents before they edit a shared Git repository. Develope
 - [Codex setup](docs/codex-native.md)
 - [Protocol guide](docs/tca-guide.md)
 - [GitHub App setup](docs/github-app-setup.md)
+- [Multi-person validation plan](docs/multiplayer-validation.md)
 - [Demo video](docs/assets/tca-process-demo.mp4)
 
 ## One protocol, two deployments
@@ -44,6 +45,8 @@ TCA_GITHUB_APP_PRIVATE_KEY=your-app-private-key-pem
 Deploy with uv run tca-app. Protect the App private key and database as server secrets. TCA does not accept a user's GitHub personal token as an MCP credential. In particular, never export the output of gh auth token as TCA_TOKEN.
 
 Each person installs the CLI from this checkout and logs in with a GitHub-listed Ed25519 SSH key:
+
+For a disposable trial, set `TCA_HOME` to a new temporary directory first. The CLI stores its key, session, and local database there instead of using the existing `~/.tca`. Remove the trial public key from GitHub before deleting the temporary directory.
 
 ~~~bash
 uv tool install --python 3.12 .

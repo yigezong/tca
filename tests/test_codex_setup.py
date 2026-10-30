@@ -20,6 +20,7 @@ from tca.codex_setup import (
     project_command,
     login_command,
     _session_path,
+    tca_home,
     setup,
     transport_matches,
 )
@@ -186,6 +187,15 @@ def test_cli_login_keeps_key_local_and_writes_tca_only_session(tmp_path: Path, m
     path = _session_path(server_url)
     assert path.stat().st_mode & 0o777 == 0o600
     assert json.loads(path.read_text())["token"] == "tca_scoped-session"
+
+
+def test_tca_home_can_isolate_client_keys_sessions_and_local_db(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("TCA_HOME", str(tmp_path / "disposable-tca"))
+    from tca.codex_setup import local_db
+
+    assert tca_home() == tmp_path / "disposable-tca"
+    assert _session_path("https://example.com/mcp").parent == tca_home() / "sessions"
+    assert local_db() == tca_home() / "coordination.db"
 
 
 def test_transport_match_checks_all_requested_fields() -> None:

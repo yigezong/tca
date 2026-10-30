@@ -6,6 +6,7 @@ TCA 在多个开发 Agent 修改同一个 Git 仓库前协调意图、接口和�
 - [Codex 接入](docs/codex-native.md)
 - [协议说明](docs/tca-guide.md)
 - [GitHub App 配置](docs/github-app-setup.md)
+- [多人协议验证](docs/multiplayer-validation.md)
 - [流程演示视频](docs/assets/tca-process-demo.mp4)
 
 ## 一套协议，两种部署
@@ -44,6 +45,8 @@ TCA_GITHUB_APP_PRIVATE_KEY=your-app-private-key-pem
 运行 uv run tca-app 部署服务。App 私钥和数据库凭证只放在服务端密钥配置中。App 用于查询成员当前仓库权限，不需要 Contents 或写入权限。TCA 不接受成员个人 GitHub token 作为 MCP 凭证；特别不要把 gh auth token 的输出设为 TCA_TOKEN。
 
 每位成员先从本仓库安装 CLI，并用自己 GitHub 账号登记的 Ed25519 SSH 公钥登录：
+
+试用时可先设置 `TCA_HOME` 为一个新建的临时目录；CLI 的密钥、会话和本机数据库会写入该目录，不碰现有的 `~/.tca`。结束后先从 GitHub 账号移除这次添加的公钥，再删除临时目录。
 
 ~~~bash
 uv tool install --python 3.12 .

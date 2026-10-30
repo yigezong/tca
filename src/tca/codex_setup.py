@@ -69,7 +69,13 @@ def project_id_for(repo: Path) -> str:
 
 
 def local_db() -> Path:
-    return Path.home() / ".tca" / "coordination.db"
+    return tca_home() / "coordination.db"
+
+
+def tca_home() -> Path:
+    """Allow disposable client state without changing the user's normal TCA setup."""
+    override = os.getenv("TCA_HOME", "").strip()
+    return Path(override).expanduser().resolve() if override else Path.home() / ".tca"
 
 
 def skill_text() -> str:
@@ -299,7 +305,7 @@ def doctor(args: argparse.Namespace) -> int:
 
 def _session_path(server_url: str) -> Path:
     digest = hashlib.sha256(server_url.encode()).hexdigest()[:24]
-    return Path.home() / ".tca" / "sessions" / f"{digest}.json"
+    return tca_home() / "sessions" / f"{digest}.json"
 
 
 def _write_secret(path: Path, content: bytes) -> None:
@@ -454,7 +460,7 @@ def main() -> None:
     login = sub.add_parser("login", help="sign a challenge with a GitHub-listed SSH key")
     login.add_argument("--server-url", required=True)
     login.add_argument("--login", required=True)
-    login.add_argument("--key-path", type=Path, default=Path.home() / ".tca" / "identity")
+    login.add_argument("--key-path", type=Path, default=tca_home() / "identity")
     session = sub.add_parser("token", help="print the local TCA-only session token")
     session.add_argument("--server-url", required=True)
     for name in ("start", "join", "projects", "delegate-m"):
