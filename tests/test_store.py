@@ -85,6 +85,37 @@ def test_claim_history_retains_revisions_and_state_transitions() -> None:
         store.close()
 
 
+def test_claim_update_rolls_back_if_history_event_write_fails(tmp_path) -> None:
+    database = tmp_path / "tca.db"
+    store = ClaimStore(database)
+    try:
+        store.save_received(make_claim("team/project", "claim-1"))
+        with sqlite3.connect(database) as connection:
+            connection.execute("""CREATE TRIGGER fail_event BEFORE INSERT ON claim_events
+                BEGIN SELECT RAISE(ABORT, 'simulated history write failure'); END""")
+
+        try:
+            store.save_received(make_claim("team/project", "claim-1", version=2))
+        except sqlite3.IntegrityError:
+            pass
+        else:
+            raise AssertionError("history write failure should abort the Claim update")
+    finally:
+        store.close()
+
+    reopened = ClaimStore(database)
+    try:
+        assert reopened.get("team/project", "claim-1").claim.version == 1
+        assert [item["version"] for item in reopened.list_claim_revisions(
+            "team/project", "claim-1"
+        )] == [1]
+        assert [item["event_type"] for item in reopened.list_claim_events(
+            "team/project", "claim-1"
+        )] == ["claim_submitted"]
+    finally:
+        reopened.close()
+
+
 def test_coordination_lease_excludes_other_workers_and_recovers_after_expiry() -> None:
     store = ClaimStore()
     try:
