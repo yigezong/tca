@@ -164,6 +164,9 @@ def test_existing_remote_config_can_migrate_off_github_token(tmp_path: Path, mon
 def test_cli_login_keeps_key_local_and_writes_tca_only_session(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     server_url = "https://tca.example.com/mcp"
+    session_dir = _session_path(server_url).parent
+    session_dir.mkdir(parents=True, mode=0o755)
+    session_dir.chmod(0o755)
     calls = []
 
     def fake_api(url, token, path, body=None):
@@ -185,6 +188,7 @@ def test_cli_login_keeps_key_local_and_writes_tca_only_session(tmp_path: Path, m
     assert len(calls) == 2
     assert (tmp_path / ".tca" / "identity").stat().st_mode & 0o777 == 0o600
     path = _session_path(server_url)
+    assert path.parent.stat().st_mode & 0o777 == 0o700
     assert path.stat().st_mode & 0o777 == 0o600
     assert json.loads(path.read_text())["token"] == "tca_scoped-session"
 

@@ -53,7 +53,7 @@ uv tool install --python 3.12 .
 tca-codex login --server-url https://tca.example.com/mcp --login YOUR_GITHUB_LOGIN
 ~~~
 
-On first login, the CLI creates a dedicated key in ~/.tca/identity. If GitHub does not yet list its public key, the CLI prints the key and asks you to add it at https://github.com/settings/keys; retry login afterward. The private key stays on your computer. Login signs a one-time challenge and stores an eight-hour TCA-only session in ~/.tca/sessions with owner-only file permissions. The server stores only its token hash.
+On first login, the CLI creates a dedicated key in `TCA_HOME/identity` (default `~/.tca/identity`). If GitHub does not yet list its public key, the CLI prints the key and asks you to add it at https://github.com/settings/keys; retry login afterward. The private key stays on your computer. Login signs a one-time challenge and stores an eight-hour TCA-only session in `TCA_HOME/sessions` with owner-only file permissions (`0600`, in a `0700` directory). The server stores only its token hash. The login response and client session file necessarily contain the raw token; treat both as secrets.
 
 Make this session available to Codex when it starts:
 
@@ -61,7 +61,7 @@ Make this session available to Codex when it starts:
 export TCA_TOKEN="$(tca-codex token --server-url https://tca.example.com/mcp)"
 ~~~
 
-If Codex Desktop does not inherit terminal variables, set TCA_TOKEN in its launch environment before opening a new task. This token only authorizes TCA operations; it is not a GitHub or model API key.
+If Codex Desktop does not inherit terminal variables, set TCA_TOKEN in its launch environment before opening a new task. This token only authorizes TCA operations; it is not a GitHub or model API key. `tca-codex token` prints the raw token when run directly; do not paste it into chats, logs, screenshots, repository files, or shell tracing. Use HTTPS and configure any proxy to omit Authorization headers from logs. A compromised client or server operator is outside this protection boundary.
 
 The repository creator, who needs GitHub admin permission, starts any installed repository:
 
@@ -95,4 +95,6 @@ Older shared-token and Claim-webhook implementations remain in the code for exis
 
 ## Verification
 
-Run uv sync and uv run pytest. The test suite covers the controller, SSH challenge replay, TCA session authentication, metadata-only GitHub App permission checks, M delegation, Claim history, and local/hosted API behavior. A live GitHub App installation and multi-computer deployment still require an integration check in the target environment.
+Run `uv sync` and `uv run pytest`. The test suite covers the controller, SSH challenge replay, TCA session authentication, metadata-only GitHub App permission checks, M delegation, Claim history, atomic rollback when a history write fails, and local/hosted API behavior.
+
+On 2026-11-01, all 93 tests passed. A separate live check used a GitHub App installed on one disposable private repository, a real GitHub-listed SSH key, and a local in-process HTTP client. It confirmed owner access, non-member and uninstalled-repository denial, TCA login, rejection of a GitHub-token-shaped credential, and that the server database stored a session hash rather than the raw token. A separate disposable SQLite run reopened the database in new processes, retained two Claim revisions and their events, and rolled back an injected event-write failure. These checks do **not** cover two real developers on separate computers, a deployed HTTPS/proxy stack, hosted Postgres durability, power loss, or protection against a malicious database administrator. Follow the [multi-person validation plan](docs/multiplayer-validation.md) for those remaining checks.

@@ -363,6 +363,7 @@ def login_command(args: argparse.Namespace) -> None:
         raise
     path = _session_path(args.server_url)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.parent.chmod(0o700)
     _write_secret(path, json.dumps(response).encode())
     print(f"TCA login complete for {response['login']}; session expires at {response['expires_at']}.")
     print(f"To expose the TCA-only session to Codex: export TCA_TOKEN=\"$(tca-codex token --server-url {args.server_url})\"")

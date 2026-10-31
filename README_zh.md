@@ -53,7 +53,7 @@ uv tool install --python 3.12 .
 tca-codex login --server-url https://tca.example.com/mcp --login 你的GitHub用户名
 ~~~
 
-第一次登录会在 ~/.tca/identity 生成专用私钥。若 GitHub 尚未登记其公钥，CLI 会打印公钥；到 https://github.com/settings/keys 添加后重试。私钥不发送给 TCA；客户端签署一次性挑战。成功后，本机 ~/.tca/sessions 保存一个 8 小时有效的 TCA 专用会话，服务端只保存会话 token 的哈希。
+第一次登录会在 `TCA_HOME/identity`（默认 `~/.tca/identity`）生成专用私钥。若 GitHub 尚未登记其公钥，CLI 会打印公钥；到 https://github.com/settings/keys 添加后重试。私钥不发送给 TCA；客户端签署一次性挑战。成功后，本机 `TCA_HOME/sessions` 保存一个 8 小时有效的 TCA 专用会话：文件权限为 `0600`、目录权限为 `0700`，服务端只保存 token 哈希。登录响应和客户端会话文件必然含有明文 token，必须按凭证保护。
 
 让 Codex 启动环境能读取该 TCA 会话：
 
@@ -61,7 +61,7 @@ tca-codex login --server-url https://tca.example.com/mcp --login 你的GitHub用
 export TCA_TOKEN="$(tca-codex token --server-url https://tca.example.com/mcp)"
 ~~~
 
-若 Codex 桌面版不继承终端环境变量，需在其启动环境配置 TCA_TOKEN，再开启新任务。它只能访问 TCA，不是 GitHub 凭证，也不是模型 API key。
+若 Codex 桌面版不继承终端环境变量，需在其启动环境配置 TCA_TOKEN，再开启新任务。它只能访问 TCA，不是 GitHub 凭证，也不是模型 API key。单独运行 `tca-codex token` 会把明文打印到终端；不要将其粘贴到聊天、日志、截图或仓库文件，也不要开启会记录命令展开结果的 shell tracing。远程服务必须使用 HTTPS，代理日志需屏蔽 Authorization 请求头。客户端被入侵或服务运营方不可信不在这套保密保证内。
 
 有仓库 admin 权限的人启动项目：
 
@@ -95,4 +95,6 @@ A 在自己的工作分支开发，提交并 push 后调用 complete_claim。团
 
 ## 验证边界
 
-运行 uv sync 和 uv run pytest。测试覆盖状态机、一次性 SSH 挑战、TCA 会话、GitHub App 的 Metadata-only 权限查询、M 委派、Claim 历史及本机/远程接口。真正的 GitHub App 安装和跨电脑部署仍需在目标环境做一次联调。
+运行 `uv sync` 和 `uv run pytest`。测试覆盖状态机、一次性 SSH 挑战、TCA 会话、GitHub App 的 Metadata-only 权限查询、M 委派、Claim 历史、历史写入失败时的事务回滚及本机/远程接口。
+
+2026-11-01，完整测试集 93 项通过。另用仅安装到一个临时私有仓库的真实 GitHub App、真实 GitHub SSH 公钥和本机进程内 HTTP 客户端，验证了所有者权限、非成员及未安装仓库被拒绝、TCA 登录、GitHub token 格式的凭证被拒绝，以及服务端数据库只存会话哈希。还用一次性 SQLite 库在不同进程中验证两版 Claim 和事件能重开读取、事件写入失败时可回滚。这些结果**不覆盖**两位真实开发者跨电脑联调、线上 HTTPS/代理栈、Postgres 持久性、断电恢复或抵抗数据库管理员篡改。后续按[多人验证方案](docs/multiplayer-validation.md)继续验证。

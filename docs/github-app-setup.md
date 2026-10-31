@@ -10,7 +10,7 @@ Hosted TCA uses a GitHub App to check repository membership. Members never send 
 6. Each person adds their dedicated TCA Ed25519 public key to their own GitHub account under Settings → SSH and GPG keys, then runs tca-codex login. A private key stays on the user's computer. The CLI reports the public key if it has not yet been added.
 7. A repository admin runs tca-codex start for a repository where the App is installed. Developers run tca-codex join; the server checks current collaborator permissions through the App.
 
-The App installation token is requested for one repository with Metadata: read and cached until shortly before expiry. TCA sessions expire after eight hours. Revoking a user's repository permission is checked on the next project operation; removing the user's SSH key prevents new logins, while an already issued TCA session remains valid until it expires.
+Repository-permission checks use a token scoped to the requested repository with Metadata: read, cached until shortly before expiry. The public SSH-key lookup also uses a metadata-read App installation token, avoiding GitHub's shared anonymous API rate limit. TCA sessions expire after eight hours. Revoking a user's repository permission is checked on the next project operation; removing the user's SSH key prevents new logins, while an already issued TCA session remains valid until it expires.
 
 The App needs no access to source contents for the standard Claim and manual integration flow. The optional legacy GitHub compare webhook has a separate access requirement and is not part of this setup.
 
