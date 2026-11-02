@@ -399,6 +399,7 @@ class PostgresClaimStore:
         target: ClaimState,
         decision: Decision | None = None,
         metadata: dict[str, object] | None = None,
+        expected_revision: int | None = None,
     ) -> ClaimRecord:
         with self._connect() as connection:
             row = connection.execute(
@@ -408,6 +409,8 @@ class PostgresClaimStore:
             ).fetchone()
             if row is None:
                 raise KeyError(f"{project_id}:{claim_id}")
+            if expected_revision is not None and row["revision"] != expected_revision:
+                raise ValueError("stale coordination claim revision")
             current = ClaimState(row["state"])
             if current not in expected:
                 raise ValueError(
@@ -417,11 +420,13 @@ class PostgresClaimStore:
             now = _now()
             connection.execute(
                 """UPDATE claims SET state = %s, revision = %s,
-                decision = COALESCE(%s, decision), updated_at = %s
+                decision = CASE WHEN %s = 'assessing' THEN NULL ELSE COALESCE(%s, decision) END,
+                updated_at = %s
                 WHERE project_id = %s AND claim_id = %s""",
                 (
                     target.value,
                     row["revision"] + 1,
+                    target.value,
                     encoded_decision,
                     now,
                     project_id,

@@ -218,6 +218,8 @@ def create_mcp(controller: Controller | None = None, access: ProjectAccess | Non
             access.require(parsed.project_id, "m")
             if parsed.advisor != "agent-m":
                 raise PermissionError("M advice must use advisor agent-m")
+            if parsed.coordination_round < 1:
+                raise ValueError("coordination_round from the leased task is required")
         return controller.publish_coordination_advice(parsed).to_mapping()
 
     @mcp.tool()
@@ -278,12 +280,16 @@ def create_mcp(controller: Controller | None = None, access: ProjectAccess | Non
         uncertainty: float | None = None,
         boundary_contract: str = "",
         worker_id: str | None = None,
+        expected_round: int | None = None,
+        expected_revision: int | None = None,
     ) -> dict[str, object]:
         """For M: submit a recommendation; C validates and applies it."""
         if access:
             access.require(project_id, "m")
             if worker_id not in (None, "agent-m"):
                 raise PermissionError("M worker_id must be agent-m")
+            if expected_round is None or expected_revision is None:
+                raise ValueError("expected_round and expected_revision from the leased task are required")
         decision = Decision.from_mapping(
             {
                 "state": state,
@@ -296,7 +302,8 @@ def create_mcp(controller: Controller | None = None, access: ProjectAccess | Non
             }
         )
         return controller.submit_coordination_decision(
-            project_id, claim_id, decision, worker_id=worker_id
+            project_id, claim_id, decision, worker_id=worker_id,
+            expected_round=expected_round, expected_revision=expected_revision,
         ).to_mapping()
 
     @mcp.tool()

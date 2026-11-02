@@ -316,6 +316,10 @@ def build_parser() -> argparse.ArgumentParser:
     approve.add_argument("--wait-for", action="append", default=[])
     approve.add_argument("--conflicts-with", action="append", default=[])
     approve.add_argument("--worker-id", default=os.getenv("TCA_AGENT_ID", "agent-m"))
+    approve.add_argument("--expected-round", type=int, required=True,
+                         help="coordination_round returned by tca-client task")
+    approve.add_argument("--expected-revision", type=int, required=True,
+                         help="claim.revision returned by tca-client task")
 
     resolve = subparsers.add_parser(
         "resolve",
@@ -453,6 +457,8 @@ async def run(args: argparse.Namespace) -> dict[str, Any] | None:
                     "project_id": project_id,
                     "claim_id": claim_id,
                     "worker_id": args.worker_id,
+                    "expected_round": task["coordination_round"],
+                    "expected_revision": claim_record["revision"],
                     **decision,
                 },
             )
@@ -480,6 +486,8 @@ async def run(args: argparse.Namespace) -> dict[str, Any] | None:
                 "wait_for": args.wait_for,
                 "conflicts_with": args.conflicts_with,
                 "worker_id": args.worker_id,
+                "expected_round": args.expected_round,
+                "expected_revision": args.expected_revision,
             },
         )
     if args.command == "resolve":

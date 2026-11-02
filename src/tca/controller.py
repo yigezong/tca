@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
+from dataclasses import replace
 
 from .domain import (
     Claim,
@@ -305,52 +306,50 @@ class Controller:
                 if record.claim.coordination_group == claim.coordination_group
                 and record.state not in {ClaimState.COMPLETED, ClaimState.INTEGRATED}
             ]
-            # Group membership stays open until a member starts. A later
-            # submission reopens every approved but not executing peer so M
-            # sees the current set; no fixed peer count can strand the first A.
+            # A new member invalidates every unstarted peer's previous review,
+            # even if another member of the group is already executing.
             running = [
                 record for record in grouped
                 if record.state is ClaimState.EXECUTING
             ]
-            if running:
-                shared_boundary = any(
-                    any(
-                        paths_overlap(path, occupied)
-                        for path in claim.planned_paths
-                        for occupied in peer.claim.planned_paths
-                    )
-                    or bool(set(claim.owned_symbols) & set(peer.claim.owned_symbols))
-                    for peer in running
-                )
-                if shared_boundary:
-                    self.store.queue_coordination(
-                        claim.project_id, claim.claim_id, now=self._now_iso()
-                    )
-                    return self.store.get(claim.project_id, claim.claim_id)
-            else:
-                group_records = [
-                    *grouped, self.store.get(claim.project_id, claim.claim_id)
-                ]
-                for record in group_records:
-                    if record.state in {
-                        ClaimState.APPROVED,
-                        ClaimState.APPROVED_WITH_CONSTRAINTS,
-                    }:
-                        record = self.store.transition(
+            unstarted = [
+                record for record in grouped
+                if record.state in {
+                    ClaimState.ASSESSING,
+                    ClaimState.APPROVED,
+                    ClaimState.APPROVED_WITH_CONSTRAINTS,
+                }
+            ]
+            if unstarted or not running:
+                for record in [*unstarted, self.store.get(claim.project_id, claim.claim_id)]:
+                    # A transition to the same state starts a new coordination
+                    # round and invalidates an M task leased before this arrival.
+                    if record.claim.claim_id != claim.claim_id:
+                        self.store.transition(
                             record.claim.project_id,
                             record.claim.claim_id,
-                            {
-                                ClaimState.APPROVED,
-                                ClaimState.APPROVED_WITH_CONSTRAINTS,
-                            },
+                            {record.state},
                             ClaimState.ASSESSING,
                         )
-                    if record.state is ClaimState.ASSESSING:
-                        self.store.queue_coordination(
-                            record.claim.project_id,
-                            record.claim.claim_id,
-                            now=self._now_iso(),
-                        )
+                    self.store.queue_coordination(
+                        record.claim.project_id,
+                        record.claim.claim_id,
+                        now=self._now_iso(),
+                    )
+                return self.store.get(claim.project_id, claim.claim_id)
+            shared_boundary = any(
+                any(
+                    paths_overlap(path, occupied)
+                    for path in claim.planned_paths
+                    for occupied in peer.claim.planned_paths
+                )
+                or bool(set(claim.owned_symbols) & set(peer.claim.owned_symbols))
+                for peer in running
+            )
+            if shared_boundary:
+                self.store.queue_coordination(
+                    claim.project_id, claim.claim_id, now=self._now_iso()
+                )
                 return self.store.get(claim.project_id, claim.claim_id)
         return self._assess_or_queue(claim, context)
 
@@ -520,11 +519,14 @@ class Controller:
     def get_integration_context(self, project_id: str, claim_id: str) -> dict[str, object]:
         """Give the later integrator only relevant public coordination context."""
         record = self.store.get(project_id, claim_id)
+        round_number = self._coordination_round(project_id, claim_id)
+        history = self.store.list_coordination_advice(project_id, claim_id)
         return {
             "claim": record.to_mapping(),
             "related_claims": [item.to_mapping() for item in self.store.list_coordination_context(project_id, exclude=claim_id)],
             "subgoal_events": [item.to_mapping() for item in self.store.list_subgoal_events(project_id)],
-            "advice": [item.to_mapping() for item in self.store.list_coordination_advice(project_id, claim_id)],
+            "advice": [item.to_mapping() for item in history if item.coordination_round == round_number],
+            "advice_history": [item.to_mapping() for item in history],
             "instruction": "Rebase onto relevant newer work and resolve code, API, and Git conflicts yourself. Escalate only product-requirements ambiguity.",
         }
 
@@ -534,7 +536,18 @@ class Controller:
         self.store.get(advice.project_id, advice.claim_id)
         if not advice.message.strip():
             raise ValueError("coordination advice requires a message")
+        round_number = self._coordination_round(advice.project_id, advice.claim_id)
+        if advice.coordination_round not in (0, round_number):
+            raise ValueError("stale coordination advice round")
+        advice = replace(advice, coordination_round=round_number)
         return self.store.publish_coordination_advice(advice)
+
+    def _coordination_round(self, project_id: str, claim_id: str) -> int:
+        return max(1, sum(
+            event["event_type"] == "state_transition"
+            and event["payload"].get("to") == ClaimState.ASSESSING.value
+            for event in self.store.list_claim_events(project_id, claim_id)
+        ))
 
     def integrate_claim(self, project_id: str, claim_id: str) -> ClaimRecord:
         self.run_deadline_checks(project_id)
@@ -600,7 +613,10 @@ class Controller:
         completed = tuple(
             item for item in context if item.state is ClaimState.COMPLETED
         )
-        return CoordinationTask(record, active, completed)
+        return CoordinationTask(
+            record, active, completed,
+            self._coordination_round(task_project_id, claim_id),
+        )
 
     def submit_coordination_decision(
         self,
@@ -608,6 +624,8 @@ class Controller:
         claim_id: str,
         decision: Decision,
         worker_id: str | None = None,
+        expected_round: int | None = None,
+        expected_revision: int | None = None,
     ) -> ClaimRecord:
         self.run_deadline_checks(project_id)
         if decision.state is ClaimState.NEEDS_HUMAN and not self.allow_needs_human:
@@ -643,6 +661,10 @@ class Controller:
                 project_id, claim_id, worker_id, now=self._now_iso()
             )
         current = self.store.get(project_id, claim_id)
+        if expected_round is not None and expected_round != self._coordination_round(project_id, claim_id):
+            raise ValueError("stale coordination round")
+        if expected_revision is not None and expected_revision != current.revision:
+            raise ValueError("stale coordination claim revision")
         if current.state in {
             ClaimState.APPROVED,
             ClaimState.APPROVED_WITH_CONSTRAINTS,
@@ -666,6 +688,7 @@ class Controller:
             {ClaimState.ASSESSING},
             decision.state,
             decision=decision,
+            expected_revision=expected_revision,
         )
         self.store.complete_coordination(project_id, claim_id, worker_id=worker_id)
         return record

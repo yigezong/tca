@@ -22,7 +22,7 @@
 
 C 的状态始终是唯一权威。M 通过 wait_for_coordination_task 收取任务，通过 publish_coordination_advice 和 submit_coordination_decision 提交建议。M 不能直接绕过 C 放行代码修改。
 
-同组成员在首次执行前保持开放，后来者会使尚未执行的已批准成员重新进入审阅，不再以 `expected_group_size` 的固定人数作为放行门槛。A1 开工后 A2 才到时，若共享路径或符号，A2 等 M 审阅；M 只协调 A2，不中断 A1。同组未收到 M 决定时，C 可在超时后放行没有已声明共享边界或依赖的 Claim；有共享边界的转人工处理，不自动放行。独立 Claim 无须人为凑组或等待。
+同组后来者会使尚未执行的成员重新进入审阅，不再以 `expected_group_size` 的固定人数作为放行门槛。例如 A1 已开工、A2 已获建议但尚未开工，A3 到来时，C 不打断 A1，却会撤销 A2 的旧批准，把 A2、A3 一起交给 M 重新协调。旧建议保留在 `advice_history`，不再出现在当前 `advice`；旧任务的轮次或 Claim 修订号不能再提交决定。M 从 `wait_for_coordination_task` 获取 `coordination_round` 和 `claim.revision`，分别回填到建议的 `coordination_round` 及决定的 `expected_round`、`expected_revision`。同组有成员仍在 `assessing` 时，已批准成员也不能开工。若 A2 已开工，C 不打断它，只协调后来者。同组未收到 M 决定时，C 可在超时后放行没有已声明共享边界或依赖的 Claim；有共享边界的转人工处理，不自动放行。独立 Claim 无须人为凑组或等待。
 
 成员可调用 `get_project_metrics` 查看基于服务端事件计算的各阶段时长中位数、Claim 修订、重新审阅次数，以及 A 主动上报的返工次数和耗时。返工时 A 用 `record_subgoal_event` 报 `rework_started`、`rework_finished`，两次用同一 `subgoal_id`；服务端时间戳为准。未上报的返工不会出现在指标中。这些是协议状态间的墙钟时间，不等于 Agent 实际编码时间；评估节省总时间时仍要与相同任务的 solo / vanilla coop 配对比较。
 

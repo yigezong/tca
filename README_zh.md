@@ -95,6 +95,8 @@ A 在自己的工作分支开发，提交并 push 后调用 complete_claim。团
 
 项目成员可通过 MCP `get_project_metrics` 查看协调、开工等待、执行和集成阶段的墙钟时间中位数与每个 Claim 的记录。复现实验中的四人错峰场景：`uv run python scripts/run-staggered-case.py`，结果与边界见[错峰 case 报告](docs/staggered-case.md)。该脚本用真实隔离 Git 分支与提交、脚本扮演 A/M，不是多模型速度或成功率实验。
 
+异步同组提交时，后来者会触发所有尚未开工成员重新协调：A1 已开工、A2 已获建议、A3 新到，C 保持 A1 工作状态，把 A2 与 A3 一起交 M；A2 的旧批准和当前建议失效，历史仍可查。M 须将任务中的 `coordination_round` 和 `claim.revision` 回填到建议与决定，旧轮次提交会被拒绝。详见[协议指南](docs/tca-guide.md)。
+
 旧式共享 token 和 Claim webhook 的实现暂留在代码中，以兼容已有的受信任部署；新项目不要使用旧模板流程。
 
 ## 验证边界

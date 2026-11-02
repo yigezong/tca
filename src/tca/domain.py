@@ -254,6 +254,7 @@ class CoordinationTask:
     claim: ClaimRecord
     active_claims: tuple[ClaimRecord, ...]
     completed_claims: tuple[ClaimRecord, ...]
+    coordination_round: int = 1
 
     def to_mapping(self) -> dict[str, Any]:
         return {
@@ -262,6 +263,7 @@ class CoordinationTask:
             "completed_claims": [
                 record.to_mapping() for record in self.completed_claims
             ],
+            "coordination_round": self.coordination_round,
         }
 
 
@@ -308,6 +310,7 @@ class CoordinationAdvice:
     message: str
     related_subgoals: tuple[str, ...] = ()
     created_at: str = ""
+    coordination_round: int = 0
 
     @classmethod
     def from_mapping(cls, value: dict[str, Any]) -> "CoordinationAdvice":
@@ -320,6 +323,7 @@ class CoordinationAdvice:
             advisor=str(value["advisor"]), message=str(value["message"]),
             related_subgoals=tuple(str(item) for item in value.get("related_subgoals", ())),
             created_at=str(value.get("created_at", "")),
+            coordination_round=int(value.get("coordination_round", 0)),
         )
 
     def to_mapping(self) -> dict[str, Any]:

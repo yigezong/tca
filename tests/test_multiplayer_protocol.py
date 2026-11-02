@@ -162,6 +162,8 @@ def test_separate_people_and_tokens_over_hosted_http(monkeypatch, tmp_path) -> N
         tool(sessions["manager"], "submit_coordination_decision", {
             "project_id": "org/repo", "claim_id": "first", "state": "approved",
             "reason": "A1 may start", "worker_id": "agent-m",
+            "expected_round": first_task["coordination_round"],
+            "expected_revision": first_task["claim"]["revision"],
         })
         assert tool(sessions["a1"], "start_execution", {
             "project_id": "org/repo", "claim_id": "first"})["state"] == "executing"
@@ -177,11 +179,14 @@ def test_separate_people_and_tokens_over_hosted_http(monkeypatch, tmp_path) -> N
         tool(sessions["manager"], "publish_coordination_advice", {"advice": {
             "project_id": "org/repo", "claim_id": "second", "advisor": "agent-m",
             "message": "Preserve A1's interface while integrating your change.",
+            "coordination_round": task["coordination_round"],
         }})
         tool(sessions["manager"], "submit_coordination_decision", {
             "project_id": "org/repo", "claim_id": "second",
             "state": "approved_with_constraints", "reason": "A2 owns the new adapter",
             "constraints": ["Preserve A1's interface"], "worker_id": "agent-m",
+            "expected_round": task["coordination_round"],
+            "expected_revision": task["claim"]["revision"],
         })
         a2_context = tool(sessions["a2"], "get_integration_context", {
             "project_id": "org/repo", "claim_id": "second"})

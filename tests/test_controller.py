@@ -93,6 +93,64 @@ def test_leased_coordination_task_only_accepts_its_worker_decision() -> None:
     assert decided.state is ClaimState.APPROVED
 
 
+def test_late_group_member_reopens_unstarted_peer_without_interrupting_running_peer() -> None:
+    controller = make_controller()
+    group = "shared-feature"
+    controller.submit_claim(make_claim("a1", ("src/core.py",), coordination_group=group))
+    approve_claim(controller, "a1")
+    controller.start_execution("team/project", "a1")
+
+    controller.submit_claim(make_claim("a2", ("src/adapter.py",), coordination_group=group))
+    old_task = controller.get_coordination_task("team/project")
+    assert old_task is not None
+    assert old_task.claim.claim.claim_id == "a2"
+    controller.publish_coordination_advice(CoordinationAdvice(
+        "team/project", "a2", "agent-m", "A2 owns the adapter",
+        coordination_round=old_task.coordination_round,
+    ))
+    controller.submit_coordination_decision(
+        "team/project", "a2", Decision(ClaimState.APPROVED, "old plan"),
+        expected_round=old_task.coordination_round,
+        expected_revision=old_task.claim.revision,
+    )
+
+    controller.submit_claim(make_claim("a3", ("src/adapter.py",), coordination_group=group))
+    assert controller.store.get("team/project", "a1").state is ClaimState.EXECUTING
+    assert controller.store.get("team/project", "a2").state is ClaimState.ASSESSING
+    assert controller.store.get("team/project", "a2").decision is None
+    assert controller.store.get("team/project", "a3").state is ClaimState.ASSESSING
+    assert controller.get_integration_context("team/project", "a2")["advice"] == []
+    assert len(controller.get_integration_context("team/project", "a2")["advice_history"]) == 1
+    with pytest.raises(ValueError, match="stale coordination advice round"):
+        controller.publish_coordination_advice(CoordinationAdvice(
+            "team/project", "a2", "agent-m", "old advice",
+            coordination_round=old_task.coordination_round,
+        ))
+    with pytest.raises(ValueError, match="stale coordination round"):
+        controller.submit_coordination_decision(
+            "team/project", "a2", Decision(ClaimState.APPROVED, "old plan"),
+            expected_round=old_task.coordination_round,
+            expected_revision=old_task.claim.revision,
+        )
+    with pytest.raises(ValueError, match="illegal transition"):
+        controller.start_execution("team/project", "a2")
+
+    for claim_id in ("a2", "a3"):
+        task = controller.get_coordination_task("team/project")
+        assert task is not None
+        controller.submit_coordination_decision(
+            "team/project", claim_id,
+            Decision(ClaimState.APPROVED, "new joint plan"),
+            expected_round=controller._coordination_round("team/project", claim_id),
+            expected_revision=controller.store.get("team/project", claim_id).revision,
+        )
+        if claim_id == "a2":
+            with pytest.raises(ValueError, match="awaiting M decisions"):
+                controller.start_execution("team/project", "a2")
+    controller.start_execution("team/project", "a2")
+    controller.start_execution("team/project", "a3")
+
+
 def test_privileged_review_resolves_needs_human_with_calibrated_uncertainty() -> None:
     controller = make_controller()
     claim = controller.submit_claim(make_claim("claim-1", ("src/login/**",)))

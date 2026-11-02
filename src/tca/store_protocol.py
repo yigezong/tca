@@ -44,6 +44,7 @@ class Store(Protocol):
         target: ClaimState,
         decision: Decision | None = None,
         metadata: dict[str, object] | None = None,
+        expected_revision: int | None = None,
     ) -> ClaimRecord: ...
 
     def get(self, project_id: str, claim_id: str) -> ClaimRecord: ...

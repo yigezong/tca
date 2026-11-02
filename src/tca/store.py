@@ -429,6 +429,7 @@ class ClaimStore:
         target: ClaimState,
         decision: Decision | None = None,
         metadata: dict[str, object] | None = None,
+        expected_revision: int | None = None,
     ) -> ClaimRecord:
         with self._lock, self._connection:
             row = self._connection.execute(
@@ -438,6 +439,8 @@ class ClaimStore:
             ).fetchone()
             if row is None:
                 raise KeyError(f"{project_id}:{claim_id}")
+            if expected_revision is not None and row["revision"] != expected_revision:
+                raise ValueError("stale coordination claim revision")
             current = ClaimState(row["state"])
             if current not in expected:
                 raise ValueError(
@@ -448,11 +451,13 @@ class ClaimStore:
             now = _now()
             self._connection.execute(
                 """UPDATE claims SET state = ?, revision = ?,
-                decision = COALESCE(?, decision), updated_at = ?
+                decision = CASE WHEN ? = 'assessing' THEN NULL ELSE COALESCE(?, decision) END,
+                updated_at = ?
                 WHERE project_id = ? AND claim_id = ?""",
                 (
                     target.value,
                     revision,
+                    target.value,
                     encoded_decision,
                     now,
                     project_id,
