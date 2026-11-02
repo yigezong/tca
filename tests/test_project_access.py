@@ -176,7 +176,11 @@ async def test_mcp_enforces_single_developer_identity_and_owner_role(tmp_path) -
             await mcp.call_tool("submit_claim", {"claim": {**claim, "claim_id": "feature-2",
                 "author": "agent-bob", "work_branch": "feature/agent-bob/feature-2"}})
         await mcp.call_tool("start_execution", {"project_id": "org/repo", "claim_id": "feature-1"})
-        await mcp.call_tool("complete_claim", {"project_id": "org/repo", "claim_id": "feature-1"})
+        with pytest.raises(ToolError, match="hosted completion requires"):
+            await mcp.call_tool("complete_claim", {"project_id": "org/repo", "claim_id": "feature-1"})
+        await mcp.call_tool("complete_claim", {"project_id": "org/repo", "claim_id": "feature-1",
+            "evidence": {"base_commit": "abc123", "commit_sha": "a" * 40,
+                         "changed_paths": ["src/example.py"]}})
         await mcp.call_tool("submit_claim", {"claim": {**claim,
             "claim_id": "feature-2", "work_branch": "feature/agent-alice/feature-2"}})
     finally:

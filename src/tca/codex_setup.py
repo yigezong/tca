@@ -197,7 +197,7 @@ def setup(args: argparse.Namespace) -> None:
                 existing_project.get("mode") == "remote"
                 and existing_project.get("mcp", {}).get("url") == args.server_url
                 and existing_project.get("mcp", {}).get("token_env")
-                    in {"TCA_GITHUB_TOKEN", "TCA_API_TOKEN"}
+                    in {"TCA_GITHUB_TOKEN", "TCA_API_TOKEN", args.token_env}
             )
         )
     )

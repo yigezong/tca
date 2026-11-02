@@ -274,6 +274,14 @@ class PostgresClaimStore:
                  "payload": json.loads(row["payload"]), "created_at": row["created_at"]}
                 for row in rows]
 
+    def list_claim_ids(self, project_id: str) -> list[str]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT claim_id FROM claims WHERE project_id = %s ORDER BY claim_id",
+                (project_id,),
+            ).fetchall()
+        return [str(row["claim_id"]) for row in rows]
+
     def list_projects(self) -> list[tuple[str, str]]:
         with self._connect() as connection:
             rows = connection.execute(
@@ -390,6 +398,7 @@ class PostgresClaimStore:
         expected: set[ClaimState],
         target: ClaimState,
         decision: Decision | None = None,
+        metadata: dict[str, object] | None = None,
     ) -> ClaimRecord:
         with self._connect() as connection:
             row = connection.execute(
@@ -424,7 +433,8 @@ class PostgresClaimStore:
                 VALUES (%s, %s, %s, %s, %s, %s)""",
                 (project_id, claim_id, "state_transition", "controller",
                  json.dumps({"from": current.value, "to": target.value,
-                             "decision": decision.to_mapping() if decision else None}), now),
+                             "decision": decision.to_mapping() if decision else None,
+                             "metadata": metadata}), now),
             )
         return self.get(project_id, claim_id)
 
@@ -664,7 +674,7 @@ class PostgresClaimStore:
         return [self._decode(row) for row in rows]
 
     def record_subgoal_event(self, event: SubgoalEvent) -> SubgoalEvent:
-        created = event.created_at or _now()
+        created = _now()  # server clock is authoritative for phase metrics
         with self._connect() as connection:
             connection.execute("INSERT INTO subgoal_events(project_id, claim_id, payload, created_at) VALUES (%s, %s, %s, %s)", (event.project_id, event.claim_id, json.dumps(event.to_mapping()), created))
         return SubgoalEvent.from_mapping({**event.to_mapping(), "created_at": created})

@@ -137,7 +137,8 @@ def test_grouped_claims_can_start_asynchronously() -> None:
             "a1", ("src/a.py",), coordination_group="pair-1", expected_group_size=1
         )
     )
-    assert first.state is ClaimState.APPROVED
+    assert first.state is ClaimState.ASSESSING
+    approve_claim(controller, "a1")
     controller.start_execution("team/project", "a1")
     assert controller.store.get("team/project", "a1").state is ClaimState.EXECUTING
 

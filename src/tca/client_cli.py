@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import os
+import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,6 +13,7 @@ from typing import Any
 import yaml
 
 from .rules import paths_overlap
+from .completion import verify_local_git
 
 
 DEFAULT_TOKEN_ENV = "TCA_API_TOKEN"
@@ -541,11 +543,24 @@ async def run(args: argparse.Namespace) -> dict[str, Any] | None:
             arguments={"project_id": project_id, "claim_id": args.claim_id},
         )
     if args.command == "complete":
+        if repo_root is None:
+            raise TcaClientError("complete requires the Claim worktree")
+        record = await call_tool(
+            mcp_url=mcp_url, token=token, name="get_claim_state",
+            arguments={"project_id": project_id, "claim_id": args.claim_id},
+        )
+        if not isinstance(record, Mapping) or not isinstance(record.get("claim"), Mapping):
+            raise TcaClientError("server did not return a Claim")
+        try:
+            evidence = verify_local_git(repo_root, record["claim"])
+        except (ValueError, KeyError, subprocess.TimeoutExpired) as exc:
+            raise TcaClientError(str(exc)) from exc
         return await call_tool(
             mcp_url=mcp_url,
             token=token,
             name="complete_claim",
-            arguments={"project_id": project_id, "claim_id": args.claim_id},
+            arguments={"project_id": project_id, "claim_id": args.claim_id,
+                       "evidence": evidence},
         )
     if args.command == "progress":
         return await call_tool(

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 
 from .domain import (
@@ -15,7 +15,8 @@ from .domain import (
     SubgoalEvent,
     allowed_actions,
 )
-from .rules import BasicRuleChecker
+from .completion import validate_completion
+from .rules import BasicRuleChecker, paths_overlap
 from .store_protocol import Store
 
 
@@ -87,20 +88,19 @@ class Controller:
         if self._now_epoch() < deadline:
             return
         decision = Decision(
-            state=ClaimState.COMPLETED,
+            state=ClaimState.EXPIRED,
             reason=(
                 f"execution deadline ({self.execution_timeout:g}s) elapsed "
-                "without complete_claim; auto-completed by C"
+                "without complete_claim; execution expired without verified delivery"
             ),
         )
-        completed = self.store.transition(
+        self.store.transition(
             record.claim.project_id,
             record.claim.claim_id,
             {ClaimState.EXECUTING},
-            ClaimState.COMPLETED,
+            ClaimState.EXPIRED,
             decision=decision,
         )
-        self._reevaluate_waiters(completed)
 
     def _check_m_decision_deadline(self, record: ClaimRecord) -> None:
         created_at = self.store.coordination_created_at(
@@ -109,6 +109,58 @@ class Controller:
         if not created_at:
             return
         if self._now_epoch() < self._parse_epoch(created_at) + self.m_decision_timeout:
+            return
+        if record.claim.coordination_group:
+            peers = [
+                peer for peer in self.store.list_active(
+                    record.claim.project_id, exclude=record.claim.claim_id
+                )
+                if peer.claim.coordination_group == record.claim.coordination_group
+            ]
+            shared_boundary = any(
+                any(
+                    paths_overlap(path, occupied)
+                    for path in record.claim.planned_paths
+                    for occupied in peer.claim.planned_paths
+                )
+                or bool(set(record.claim.owned_symbols) & set(peer.claim.owned_symbols))
+                or peer.claim.claim_id in record.claim.dependencies
+                or record.claim.claim_id in peer.claim.dependencies
+                or bool(record.claim.behavior_contracts or peer.claim.behavior_contracts)
+                for peer in peers
+            )
+            if not shared_boundary:
+                self.store.transition(
+                    record.claim.project_id, record.claim.claim_id,
+                    {ClaimState.ASSESSING}, ClaimState.APPROVED,
+                    decision=Decision(
+                        ClaimState.APPROVED,
+                        "M decision timed out; no declared shared boundary "
+                        "or dependency remains",
+                    ),
+                )
+                self.store.complete_coordination(
+                    record.claim.project_id, record.claim.claim_id
+                )
+                return
+            fallback = (
+                ClaimState.NEEDS_HUMAN if self.allow_needs_human
+                else ClaimState.BLOCKED
+            )
+            self.store.transition(
+                record.claim.project_id,
+                record.claim.claim_id,
+                {ClaimState.ASSESSING},
+                fallback,
+                decision=Decision(
+                    fallback,
+                    "M decision timed out for a coordinated group; "
+                    "shared boundary was not reviewed",
+                ),
+            )
+            self.store.complete_coordination(
+                record.claim.project_id, record.claim.claim_id
+            )
             return
         active = self.store.list_active(
             record.claim.project_id, exclude=record.claim.claim_id
@@ -246,21 +298,39 @@ class Controller:
         context = self.store.list_coordination_context(
             claim.project_id, exclude=claim.claim_id
         )
-        if claim.coordination_group and claim.expected_group_size > 1:
+        if claim.coordination_group:
             grouped = [
                 record
                 for record in context
                 if record.claim.coordination_group == claim.coordination_group
                 and record.state not in {ClaimState.COMPLETED, ClaimState.INTEGRATED}
             ]
-            # Before anyone in the group starts, hold the first Claims until
-            # the declared peer set is present. M then reviews both sides.
-            # Once a peer is executing, the group is asynchronous: leave that
-            # peer untouched and submit only this new Claim for advice.
-            if not any(record.state is ClaimState.EXECUTING for record in grouped):
-                group_records = [*grouped, self.store.get(claim.project_id, claim.claim_id)]
-                if len(group_records) < claim.expected_group_size:
+            # Group membership stays open until a member starts. A later
+            # submission reopens every approved but not executing peer so M
+            # sees the current set; no fixed peer count can strand the first A.
+            running = [
+                record for record in grouped
+                if record.state is ClaimState.EXECUTING
+            ]
+            if running:
+                shared_boundary = any(
+                    any(
+                        paths_overlap(path, occupied)
+                        for path in claim.planned_paths
+                        for occupied in peer.claim.planned_paths
+                    )
+                    or bool(set(claim.owned_symbols) & set(peer.claim.owned_symbols))
+                    for peer in running
+                )
+                if shared_boundary:
+                    self.store.queue_coordination(
+                        claim.project_id, claim.claim_id, now=self._now_iso()
+                    )
                     return self.store.get(claim.project_id, claim.claim_id)
+            else:
+                group_records = [
+                    *grouped, self.store.get(claim.project_id, claim.claim_id)
+                ]
                 for record in group_records:
                     if record.state in {
                         ClaimState.APPROVED,
@@ -352,17 +422,34 @@ class Controller:
         self.store.record_execution_start(project_id, claim_id, self._now_iso())
         return record
 
-    def complete_claim(self, project_id: str, claim_id: str) -> ClaimRecord:
+    def complete_claim(
+        self, project_id: str, claim_id: str,
+        evidence: Mapping[str, object] | None = None,
+    ) -> ClaimRecord:
         self.run_deadline_checks(project_id)
         record = self.store.get(project_id, claim_id)
         if record.state in {ClaimState.COMPLETED, ClaimState.INTEGRATED}:
             return record
-        if record.state is not ClaimState.EXECUTING:
+        if record.state not in {ClaimState.EXECUTING, ClaimState.EXPIRED}:
             raise ValueError(
                 f"illegal transition for {claim_id}: {record.state.value} -> completed"
             )
+        if record.state is ClaimState.EXPIRED and evidence is None:
+            raise ValueError("an expired Claim requires Git evidence for late completion")
+        if evidence is not None:
+            validate_completion(record.claim, evidence)
         completed = self.store.transition(
-            project_id, claim_id, {ClaimState.EXECUTING}, ClaimState.COMPLETED
+            project_id,
+            claim_id,
+            {ClaimState.EXECUTING, ClaimState.EXPIRED},
+            ClaimState.COMPLETED,
+            decision=Decision(
+                ClaimState.COMPLETED,
+                ("client reported Git commit " + str(evidence["commit_sha"])
+                 + " with changed_paths=" + ",".join(evidence["changed_paths"]))
+                if evidence else "completion reported without Git evidence (legacy/local)",
+            ),
+            metadata={"completion_evidence": dict(evidence)} if evidence else None,
         )
         self._reevaluate_waiters(completed)
         return completed
@@ -714,7 +801,6 @@ class Controller:
         """Queue advice for a late group member without re-queuing its peer."""
         if (
             claim.coordination_group
-            and claim.expected_group_size > 1
             and any(
                 peer.claim.coordination_group == claim.coordination_group
                 and peer.state is ClaimState.EXECUTING

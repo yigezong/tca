@@ -161,6 +161,24 @@ def test_existing_remote_config_can_migrate_off_github_token(tmp_path: Path, mon
     assert "old workflow" not in skill.read_text()
 
 
+def test_existing_remote_config_can_refresh_generated_skill(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "codex-home").mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
+    repo = make_repo(tmp_path / "project")
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin",
+                    "git@github.com:owner/repo.git"], check=True)
+    current = args(repo, agent_id="agent-a1", mode="remote",
+                   server_url="https://tca.example.com/mcp", token_env="TCA_TOKEN")
+    setup(current)
+    skill = repo / ".agents/skills/tca-coordination/SKILL.md"
+    skill.write_text("---\nname: tca-coordination\n---\n# TCA in Codex\nold instructions\n")
+    with pytest.raises(SetupError, match="Refusing to overwrite"):
+        setup(current)
+    current.replace_local_config = True
+    setup(current)
+    assert "old instructions" not in skill.read_text()
+
+
 def test_cli_login_keeps_key_local_and_writes_tca_only_session(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     server_url = "https://tca.example.com/mcp"

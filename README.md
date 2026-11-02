@@ -87,14 +87,20 @@ A project member can inspect Claim history through the MCP tools list_claim_revi
 
 **Migrating an existing remote project:** install the GitHub App and deploy the updated server first. Each member runs tca-codex login, exports TCA_TOKEN, then runs start or join with --replace-local-config --replace-mcp to replace the old token environment name in that worktree. The project database keeps existing Claims; older revisions that were overwritten before this version cannot be recovered. The migration records each existing Claim's current snapshot.
 
+For an existing hosted worktree using the current token scheme, upgrade the CLI, then run `tca-codex join --repo /absolute/path/to/repo --server-url https://tca.example.com/mcp --replace-local-config` to refresh the generated skill. Review the worktree diff first.
+
 ## Git integration
 
 A writes code to its own Git work branch. A calls complete_claim after committing and pushing. The team's integrator merges normally. The project creator can verify the result and call integrate_claim. Optional signed GitHub push webhooks remain a compatibility integration signal; they are not the Claim submission path. Enabling the legacy webhook reader may require extra repository access and is not needed for the standard flow.
 
 Older shared-token and Claim-webhook implementations remain in the code for existing trusted deployments; they are not the hosted onboarding path. Do not copy the old protocol into new repositories.
 
+Hosted A clients should run `tca-client complete CLAIM_ID` from the worktree after pushing. It checks the Git branch, baseline, clean tree, pushed head and changed paths, plus changed top-level Python functions and class methods when `owned_symbols` are declared. The server checks reported paths and symbols against the Claim, but a Metadata-only GitHub App cannot independently inspect private code or symbol ownership. Non-Python and module-level semantic changes still need review. Execution timeouts become `expired`, not `completed`; a late delivery can supply Git evidence. Coordinated groups no longer wait for a fixed expected member count. On M timeout, C can release members with no declared shared boundary or dependency; shared work requires human review. Project members can use MCP `get_project_metrics` for phase-time medians and per-Claim records. Run `uv run python scripts/run-staggered-case.py` for a scripted four-developer staggered Git case; see its [case report](docs/staggered-case.md). The case timings are not an LLM speed comparison.
+
 ## Verification
 
 Run `uv sync` and `uv run pytest`. The test suite covers the controller, SSH challenge replay, TCA session authentication, metadata-only GitHub App permission checks, M delegation, Claim history, atomic rollback when a history write fails, and local/hosted API behavior.
 
 On 2026-11-01, all 93 tests passed. A separate live check used a GitHub App installed on one disposable private repository, a real GitHub-listed SSH key, and a local in-process HTTP client. It confirmed owner access, non-member and uninstalled-repository denial, TCA login, rejection of a GitHub-token-shaped credential, and that the server database stored a session hash rather than the raw token. A separate disposable SQLite run reopened the database in new processes, retained two Claim revisions and their events, and rolled back an injected event-write failure. These checks do **not** cover two real developers on separate computers, a deployed HTTPS/proxy stack, hosted Postgres durability, power loss, or protection against a malicious database administrator. Follow the [multi-person validation plan](docs/multiplayer-validation.md) for those remaining checks.
+
+On 2026-11-03, the expanded suite passed 104 tests; the four-developer scripted staggered case also passed its Git merge and functional check. The case uses scripted A/M choices and does not establish multi-agent success rates or time savings.

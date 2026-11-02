@@ -16,7 +16,7 @@ TCA 在多个开发 Agent 修改同一个 Git 仓库前协调意图、接口和�
 | 单台电脑 | 多工作树共享本地 SQLite | 本机用户；不隔离不同人 |
 | 多台电脑 | 共享 TCA Server + Postgres | GitHub 已登记的 Ed25519 SSH 公钥登录，随后使用短期 TCA 专用会话 |
 
-两种部署都按同一顺序运行：submit_claim → wait_for_decision → start_execution → 修改、提交、push → complete_claim。不需要 Claim 分支或 Claim webhook。completed 表示工作分支待集成，不等于已经合并。
+两种部署都按同一顺序运行：submit_claim → wait_for_decision → start_execution → 修改、提交、push → complete_claim。不需要 Claim 分支或 Claim webhook。远程部署从工作树运行 `tca-client complete CLAIM_ID`，核对本地 Git 后提交完成凭据；服务端只核对报告与 Claim 的路径范围，无法用 Metadata-only GitHub App 独立读取私有代码。`completed` 表示工作分支待集成，不等于已经合并；执行超时记为 `expired`。同组 Claim 不再等待预设的固定人数，未开工成员会在新成员到达时重新审阅。
 
 仓库管理员创建 TCA 项目，并可把唯一 M 角色委派给其他有仓库读取权限的成员。M 看 Claim 和代码、提出协调建议，不提交业务代码。有仓库写入权限的开发者可自行加入为 A。服务端在每次项目操作时重新查询仓库权限。
 
@@ -87,9 +87,13 @@ M 不必是仓库所有者，且可以更换。项目成员可通过 MCP 的 lis
 
 **已有远程项目迁移：**先安装 GitHub App 并部署新版 Server。每位成员运行 tca-codex login、设置 TCA_TOKEN，再给 start 或 join 加 --replace-local-config --replace-mcp，让旧工作树改用 TCA 专用会话。数据库会保留已有 Claim；过去已被旧版本覆盖的修订无法恢复，迁移时只会记录当下快照。
 
+已有新版远程工作树升级 TCA 仓库规则时，也可在更新 CLI 后运行 `tca-codex join --repo /absolute/path/to/repo --server-url https://tca.example.com/mcp --replace-local-config`；该选项会更新 TCA 生成的 skill，执行前请查看工作树 diff。
+
 ## Git 与集成
 
 A 在自己的工作分支开发，提交并 push 后调用 complete_claim。团队按普通 Git 流程合并。项目创建者核验后可调用 integrate_claim。签名的 GitHub push webhook 可作为兼容性的合并通知，但不是 Claim 提交渠道；标准流程不需要配置它。
+
+项目成员可通过 MCP `get_project_metrics` 查看协调、开工等待、执行和集成阶段的墙钟时间中位数与每个 Claim 的记录。复现实验中的四人错峰场景：`uv run python scripts/run-staggered-case.py`，结果与边界见[错峰 case 报告](docs/staggered-case.md)。该脚本用真实隔离 Git 分支与提交、脚本扮演 A/M，不是多模型速度或成功率实验。
 
 旧式共享 token 和 Claim webhook 的实现暂留在代码中，以兼容已有的受信任部署；新项目不要使用旧模板流程。
 
@@ -98,3 +102,5 @@ A 在自己的工作分支开发，提交并 push 后调用 complete_claim。团
 运行 `uv sync` 和 `uv run pytest`。测试覆盖状态机、一次性 SSH 挑战、TCA 会话、GitHub App 的 Metadata-only 权限查询、M 委派、Claim 历史、历史写入失败时的事务回滚及本机/远程接口。
 
 2026-11-01，完整测试集 93 项通过。另用仅安装到一个临时私有仓库的真实 GitHub App、真实 GitHub SSH 公钥和本机进程内 HTTP 客户端，验证了所有者权限、非成员及未安装仓库被拒绝、TCA 登录、GitHub token 格式的凭证被拒绝，以及服务端数据库只存会话哈希。还用一次性 SQLite 库在不同进程中验证两版 Claim 和事件能重开读取、事件写入失败时可回滚。这些结果**不覆盖**两位真实开发者跨电脑联调、线上 HTTPS/代理栈、Postgres 持久性、断电恢复或抵抗数据库管理员篡改。后续按[多人验证方案](docs/multiplayer-validation.md)继续验证。
+
+2026-11-03，扩展后的测试集 104 项通过，四人脚本错峰 case 的 Git 合并与功能检查也通过。脚本预设 A/M 决策，尚不能证明真实多 Agent 成功率或节省时间。

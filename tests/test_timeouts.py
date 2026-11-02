@@ -50,7 +50,7 @@ def approve(controller: Controller, claim_id: str, project_id: str = "team/proje
     )
 
 
-def test_execution_timeout_auto_completes_and_releases_waiter() -> None:
+def test_execution_timeout_expires_without_claiming_delivery() -> None:
     clock = FakeClock()
     controller = make_controller(
         execution_timeout=60, heartbeat_timeout=30, m_decision_timeout=3600, clock=clock
@@ -66,8 +66,15 @@ def test_execution_timeout_auto_completes_and_releases_waiter() -> None:
     clock.advance(61)
     state = controller.get_claim_state("team/project", "claim-1")
 
-    assert state["state"] == "completed"
+    assert state["state"] == "expired"
     assert "deadline" in state["decision"]["reason"]
+    with pytest.raises(ValueError, match="requires Git evidence"):
+        controller.complete_claim("team/project", "claim-1")
+    delivered = controller.complete_claim("team/project", "claim-1", {
+        "base_commit": "abc123", "commit_sha": "a" * 40,
+        "changed_paths": ["src/session/api.py"],
+    })
+    assert delivered.state is ClaimState.COMPLETED
 
     # A2 was already allowed to work; timeout does not alter its boundary.
     released = controller.store.get("team/project", "claim-2")
@@ -98,7 +105,7 @@ def test_heartbeat_extends_execution_deadline() -> None:
     # Heartbeat window elapses: now overdue.
     clock.advance(2)
     overdue = controller.get_claim_state("team/project", "claim-1")
-    assert overdue["state"] == "completed"
+    assert overdue["state"] == "expired"
 
 
 def test_m_decision_timeout_falls_back_to_rule_checker() -> None:

@@ -155,7 +155,7 @@ def test_separate_people_and_tokens_over_hosted_http(monkeypatch, tmp_path) -> N
                   "base_commit": "abc123", "work_branch": "feature/agent-a2/second",
                   "goal": "A2 adds a dependent feature", "planned_paths": ["src/shared.py"],
                   "coordination_group": "pair-1", "expected_group_size": 2}
-        assert tool(sessions["a1"], "submit_claim", {"claim": first})["state"] == "approved"
+        assert tool(sessions["a1"], "submit_claim", {"claim": first})["state"] == "assessing"
         first_task = tool(sessions["manager"], "wait_for_coordination_task", {
             "project_id": "org/repo", "timeout_seconds": 0})
         assert first_task["claim"]["claim"]["claim_id"] == "first"
@@ -166,7 +166,7 @@ def test_separate_people_and_tokens_over_hosted_http(monkeypatch, tmp_path) -> N
         assert tool(sessions["a1"], "start_execution", {
             "project_id": "org/repo", "claim_id": "first"})["state"] == "executing"
         tool(sessions["a1"], "submit_claim", {"claim": second}, error=True)
-        assert tool(sessions["a2"], "submit_claim", {"claim": second})["state"] == "approved"
+        assert tool(sessions["a2"], "submit_claim", {"claim": second})["state"] == "assessing"
         assert client.get("/api/claims/first?project_id=org/repo",
                           headers=headers(sessions["a1"])).json()["state"] == "executing"
         assert tool(sessions["a2"], "wait_for_coordination_task", {
@@ -178,6 +178,11 @@ def test_separate_people_and_tokens_over_hosted_http(monkeypatch, tmp_path) -> N
             "project_id": "org/repo", "claim_id": "second", "advisor": "agent-m",
             "message": "Preserve A1's interface while integrating your change.",
         }})
+        tool(sessions["manager"], "submit_coordination_decision", {
+            "project_id": "org/repo", "claim_id": "second",
+            "state": "approved_with_constraints", "reason": "A2 owns the new adapter",
+            "constraints": ["Preserve A1's interface"], "worker_id": "agent-m",
+        })
         a2_context = tool(sessions["a2"], "get_integration_context", {
             "project_id": "org/repo", "claim_id": "second"})
         a1_context = tool(sessions["a1"], "get_integration_context", {

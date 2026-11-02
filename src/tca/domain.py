@@ -14,6 +14,7 @@ class ClaimState(StrEnum):
     NEEDS_HUMAN = "needs_human"
     BLOCKED = "blocked"
     EXECUTING = "executing"
+    EXPIRED = "expired"
     COMPLETED = "completed"
     INTEGRATED = "integrated"
 
@@ -31,6 +32,8 @@ class SubgoalEventType(StrEnum):
     FINISHED = "subgoal_finished"
     INTEGRATION_REQUIRED = "integration_required"
     INTEGRATION_FINISHED = "integration_finished"
+    REWORK_STARTED = "rework_started"
+    REWORK_FINISHED = "rework_finished"
 
 
 ACTIVE_STATES = {
@@ -43,7 +46,7 @@ ACTIVE_STATES = {
     ClaimState.BLOCKED,
     ClaimState.EXECUTING,
 }
-COORDINATION_CONTEXT_STATES = ACTIVE_STATES | {ClaimState.COMPLETED}
+COORDINATION_CONTEXT_STATES = ACTIVE_STATES | {ClaimState.COMPLETED, ClaimState.EXPIRED}
 
 
 @dataclass(frozen=True, slots=True)
@@ -335,6 +338,7 @@ def allowed_actions(state: ClaimState) -> tuple[str, ...]:
         ClaimState.NEEDS_HUMAN: ("get_claim_state",),
         ClaimState.BLOCKED: ("get_claim_state",),
         ClaimState.EXECUTING: ("report_progress", "publish_handoff", "complete_claim", "request_requirements_clarification", "record_subgoal_event", "get_integration_context"),
+        ClaimState.EXPIRED: ("complete_claim",),
         ClaimState.COMPLETED: (),
         ClaimState.INTEGRATED: (),
     }[state]

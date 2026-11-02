@@ -12,16 +12,19 @@ from .domain import ACTIVE_STATES, Claim, ClaimState, CoordinationAdvice, Decisi
 from .rules import BasicRuleChecker
 from .store import build_store
 from .project_access import ProjectAccess
+from .metrics import claim_metrics, project_metrics
 
 INSTRUCTIONS = """
 TCA coordinates coding-agent work in Git-enabled projects.
 A: after publishing or submitting a Claim, call wait_for_decision before shared code changes.
-A: only start when allowed_actions includes start_execution; call complete_claim when done.
+A: only start when allowed_actions includes start_execution; in hosted mode
+   supply Git completion evidence after checking the pushed branch locally.
 A: while executing, call report_progress to keep the claim alive and show progress;
    when a successor needs an interface, publish_handoff with a commit, exported
    symbols, and behavior contracts. This does not mark the publishing claim done.
-   C auto-completes claims whose execution deadline elapses without complete_claim,
-   and auto-resolves M decisions that stay pending too long.
+   C expires claims whose execution deadline elapses without complete_claim.
+   If M times out, C may approve only group members with no declared shared
+   boundary or dependency; risky members require human review.
 M: use wait_for_coordination_task to observe public project state, then publish
 non-blocking natural-language coordination advice. It must not centrally split
 A's feature into technical tasks or block work already approved by C. P is a
@@ -107,6 +110,22 @@ def create_mcp(controller: Controller | None = None, access: ProjectAccess | Non
         return controller.store.list_claim_events(project_id.lower(), claim_id)
 
     @mcp.tool()
+    def get_project_metrics(project_id: str) -> dict[str, object]:
+        """Project members: median phase times and per-Claim timelines from server events."""
+        if access:
+            access.role(project_id)
+        rows = []
+        for claim_id in controller.store.list_claim_ids(project_id.lower()):
+            row = claim_metrics(
+                controller.store.list_claim_events(project_id.lower(), claim_id),
+                controller.store.list_subgoal_events(project_id.lower(), claim_id),
+            )
+            row["claim_id"] = claim_id
+            row["state"] = controller.store.get(project_id.lower(), claim_id).state.value
+            rows.append(row)
+        return project_metrics(rows)
+
+    @mcp.tool()
     async def wait_for_decision(
         project_id: str,
         claim_id: str,
@@ -136,11 +155,16 @@ def create_mcp(controller: Controller | None = None, access: ProjectAccess | Non
         return controller.start_execution(project_id, claim_id).to_mapping()
 
     @mcp.tool()
-    def complete_claim(project_id: str, claim_id: str) -> dict[str, object]:
-        """For A: mark a pushed work branch completed and trigger reevaluation."""
+    def complete_claim(
+        project_id: str, claim_id: str,
+        evidence: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        """For A: report a pushed commit and changed paths after local Git checks."""
         if access:
             access.require_claim_owner(project_id, claim_id)
-        return controller.complete_claim(project_id, claim_id).to_mapping()
+            if evidence is None:
+                raise ValueError("hosted completion requires Git evidence from the A client")
+        return controller.complete_claim(project_id, claim_id, evidence).to_mapping()
 
     @mcp.tool()
     def report_progress(
