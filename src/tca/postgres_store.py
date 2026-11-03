@@ -649,6 +649,12 @@ class PostgresClaimStore:
             )
             if cursor.rowcount != 1:
                 raise ValueError(f"{project_id}:{claim_id} is no longer executing")
+            connection.execute(
+                """INSERT INTO claim_events(project_id, claim_id, event_type, actor, payload, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s)""",
+                (project_id, claim_id, "worktree_snapshot", "codex_stop_hook",
+                 json.dumps(snapshot), str(snapshot["observed_at"])),
+            )
 
     def publish_handoff(
         self, project_id: str, claim_id: str, handoff: Handoff, ts: str

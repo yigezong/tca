@@ -10,6 +10,7 @@ import io
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -156,11 +157,39 @@ def ensure_agent_note(repo: Path) -> None:
 def ensure_ignore(repo: Path) -> None:
     path = repo / ".gitignore"
     existing = path.read_text(encoding="utf-8") if path.exists() else ""
-    entry = ".tca/agent-id"
-    if entry in existing.splitlines():
-        return
-    path.write_text(existing.rstrip() + ("\n" if existing.strip() else "") + entry + "\n",
-                    encoding="utf-8")
+    missing = [entry for entry in (".tca/agent-id", ".codex/hooks.json")
+               if entry not in existing.splitlines()]
+    if missing:
+        path.write_text(existing.rstrip() + ("\n" if existing.strip() else "")
+                        + "\n".join(missing) + "\n", encoding="utf-8")
+
+
+def ensure_turn_hook(repo: Path) -> None:
+    """Install a local, user-trusted Stop hook without editing other hooks."""
+    path = repo / ".codex" / "hooks.json"
+    config = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    if not isinstance(config, dict):
+        raise SetupError(f"Invalid hook configuration in {path}")
+    hooks = config.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        raise SetupError(f"Invalid hook configuration in {path}")
+    stop = hooks.setdefault("Stop", [])
+    if not isinstance(stop, list):
+        raise SetupError(f"Invalid Stop hooks in {path}")
+    command = shlex.quote(sys.executable) + " -m tca.turn_hook"
+    for group in stop:
+        if not isinstance(group, dict):
+            continue
+        for item in group.get("hooks", []):
+            if isinstance(item, dict) and "tca.turn_hook" in str(item.get("command", "")):
+                if item.get("command") != command:
+                    item["command"] = command
+                    path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+                return
+    stop.append({"hooks": [{"type": "command", "command": command,
+                             "timeout": 30, "statusMessage": "Capturing TCA worktree summary"}]})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
 
 
 def setup(args: argparse.Namespace) -> None:
@@ -229,6 +258,8 @@ def setup(args: argparse.Namespace) -> None:
         ensure_file(identity_path, args.agent_id + "\n")
     ensure_agent_note(repo)
     ensure_ignore(repo)
+    if args.agent_id != "agent-m":
+        ensure_turn_hook(repo)
     print(f"TCA is connected to Codex for {repo} ({project_id}, {args.mode}).")
     print("Use Codex normally in this repository. Commit AGENTS.md, .agents/skills, .tca/project.yaml and .gitignore.")
     if args.mode == "remote":
@@ -258,6 +289,13 @@ def doctor(args: argparse.Namespace) -> int:
         issues.append("project mode must be local or remote")
     if not (repo / ".tca" / "agent-id").exists():
         issues.append("missing local .tca/agent-id")
+        identity = ""
+    else:
+        identity = (repo / ".tca" / "agent-id").read_text().strip()
+    if identity and identity != "agent-m":
+        hook_path = repo / ".codex" / "hooks.json"
+        if not hook_path.is_file() or "tca.turn_hook" not in hook_path.read_text():
+            issues.append("missing Codex Stop hook; rerun tca-codex join (or init)")
     if not (repo / ".agents" / "skills" / "tca-coordination" / "SKILL.md").exists():
         issues.append("missing TCA skill")
     mcp_name = config.get("mcp", {}).get("server", "") if isinstance(config, dict) else ""
@@ -282,7 +320,6 @@ def doctor(args: argparse.Namespace) -> int:
         elif token_env == "TCA_TOKEN":
             try:
                 project_id = config.get("project_id", "")
-                identity = (repo / ".tca" / "agent-id").read_text().strip()
                 joined = _project_api(
                     config["mcp"]["url"], token,
                     f"/api/projects/{urllib.parse.quote(project_id, safe='/')}/join",

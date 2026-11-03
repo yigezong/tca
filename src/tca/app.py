@@ -15,6 +15,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from .controller import Controller
+from .domain import ClaimState
 from .github import GitHubClient, GitHubWebhookHandler, verify_github_signature
 from .mcp_server import create_mcp
 from .rules import BasicRuleChecker
@@ -146,6 +147,49 @@ def create_app(github_override=None):
             return JSONResponse({"error": str(exc)}, status_code=403)
         except KeyError:
             return JSONResponse({"error": "claim not found"}, status_code=404)
+
+    async def turn_capture_claim(request: Request) -> JSONResponse:
+        """Trusted local Stop hook resolves the executing Claim for this branch."""
+        if access is None:
+            return JSONResponse({"error": "GitHub project mode is disabled"}, status_code=404)
+        project_id = request.path_params["owner"] + "/" + request.path_params["repo"]
+        branch = request.query_params.get("branch", "")
+        try:
+            await asyncio.to_thread(access.require, project_id, "a")
+            author = "agent-" + access.principal().login.lower()
+            matches = [record for record in controller.store.list_active(project_id.lower())
+                       if record.state is ClaimState.EXECUTING
+                       and record.claim.author == author
+                       and record.claim.work_branch == branch]
+            if len(matches) > 1:
+                raise ValueError("more than one executing Claim uses this branch")
+            return JSONResponse({"claim": matches[0].to_mapping() if matches else None})
+        except PermissionError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=403)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
+
+    async def turn_capture_snapshot(request: Request) -> JSONResponse:
+        if access is None:
+            return JSONResponse({"error": "GitHub project mode is disabled"}, status_code=404)
+        project_id = request.path_params["owner"] + "/" + request.path_params["repo"]
+        claim_id = request.path_params["claim_id"]
+        try:
+            await asyncio.to_thread(access.require_claim_owner, project_id, claim_id)
+            body = await request.json()
+            if not isinstance(body, dict) or not isinstance(body.get("snapshot"), dict):
+                raise ValueError("snapshot must be a JSON object")
+            record = await asyncio.to_thread(
+                controller.report_worktree_snapshot, project_id.lower(), claim_id,
+                body["snapshot"],
+            )
+            return JSONResponse({"worktree_snapshot": record.worktree_snapshot})
+        except PermissionError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=403)
+        except KeyError:
+            return JSONResponse({"error": "claim not found"}, status_code=404)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
 
     async def projects(request: Request) -> JSONResponse:
         if access is None:
@@ -286,6 +330,8 @@ def create_app(github_override=None):
             Route("/api/auth/login", auth_login, methods=["POST"]),
             Route("/api/projects", projects, methods=["GET", "POST"]),
             Route("/api/projects/{owner}/{repo}/join", join_project, methods=["POST"]),
+            Route("/api/projects/{owner}/{repo}/turn-capture", turn_capture_claim),
+            Route("/api/projects/{owner}/{repo}/claims/{claim_id}/turn-capture", turn_capture_snapshot, methods=["POST"]),
             Route("/api/projects/{owner}/{repo}/manager", delegate_manager, methods=["POST"]),
             Route("/api/projects/{owner}/{repo}/claims/{claim_id}/revisions", claim_revisions),
             Route("/api/projects/{owner}/{repo}/claims/{claim_id}/events", claim_events),

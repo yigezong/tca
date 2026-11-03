@@ -8,7 +8,7 @@
 
 TCA 让开发者**先披露意图，再修改共享代码**。上游即使暂时没有可见代码，也要把预计修改范围、接口和不确定点写成 Claim；协调者据此约定责任。下游需要精确代码时，上游可先在自己的分支提交稳定的**接口检查点**，无需等整个功能完成或合并主分支。
 
-**边界：**TCA 不读取另一台电脑上尚未 commit 的源码。A 端可每隔数秒上报一份有时间戳的**工作树摘要**：声明范围内改了哪些文件、Python 函数/方法和参数形状，以及 A 自己写的简短行为说明。M 可以据此发现正在变化的接口，但摘要不能代替真实实现。Claim 解决“计划做什么”，工作树摘要解决“目前改动到哪里”，分支上的接口检查点解决“拿到可运行的具体代码”。
+**边界：**TCA 不读取另一台电脑上尚未 commit 的源码。A 工作树的本机 hook 在每轮 Codex 对话结束时，自动上报带时间戳的**工作树摘要**：声明范围内的文件增删、Python 函数/方法和接口签名变化。M 可以据此发现变化中的接口，但摘要不能代替真实实现，也不能说明完整行为。Claim 解决“计划做什么”，工作树摘要解决“上一轮结束时改动到哪里”，分支上的接口检查点解决“拿到可运行的具体代码”。
 
 ## 角色与 harness
 
@@ -29,7 +29,7 @@ flowchart TD
     C -->|需要协调| M["M：读取 Claim、已提交代码和最新工作树摘要"]
     M -->|建议与决定| C
     C -->|获准并调用 start_execution| D["A：在自己的 Git 分支开发"]
-    D -->|未提交改动的紧凑摘要| C
+    D -->|每轮结束：本机 Stop hook 采集紧凑摘要| C
     C -->|等待依赖或需求澄清| W["暂缓开工"]
     D -->|可选：commit/push 稳定接口| H["Git：接口检查点，尚未合并"]
     H -->|publish_handoff，重新评估依赖| C
@@ -47,7 +47,7 @@ flowchart TD
 
 1. A 提交 **Claim**：目标、预计路径与符号、行为契约、依赖、Git 基线及工作分支。Claim 通过 TCA MCP 直接发送，不需要 Claim 分支或 webhook。
 2. C 检查已声明边界。需要协调时，M 领取任务，分别向有关 A 提建议并提交决定。A 查询 `wait_for_decision` 或 `get_claim_state`；只有 `allowed_actions` 包含 `start_execution`，才能调用它开始修改共享代码。
-3. A 在自己的分支开发，可报告进度。在远程模式，`start_execution` 后从自己的工作树**另开终端**运行 `tca-client watch-worktree CLAIM_ID --interval 5`，向 C 发送紧凑摘要；行为含义变化时用 `tca-client snapshot CLAIM_ID --summary "简短说明"` 补充解释。M 领取任务时会看到最近快照，并应检查其时间戳；没有快照不等于没有改动。代码再变动后旧说明会失效。需要让下游使用真实接口时，先 commit/push 接口检查点，再用 `publish_handoff` 声明 SHA、导出符号和行为契约；这不表示整个上游功能已完成。
+3. A 在自己的分支开发，可报告进度。接入时 `tca-codex` 在 A 的工作树安装本机 Codex `Stop` hook；用户须在 Codex 中信任该 hook。此后每轮结束，hook 自动从 Git 工作树提取文件增删、Python 函数与接口签名变化，把有限元数据发给 C；A 无须启动监测命令，也没有快照 MCP 工具。M 读取最近快照及时间戳；没有快照或快照已过期时，不能推断代码未变。静态摘要不能确定行为语义。需要让下游使用真实接口时，先 commit/push 接口检查点，再用 `publish_handoff` 声明 SHA、导出符号和行为契约；这不表示整个上游功能已完成。
 4. A 完成后提交并 push，远程模式在工作树运行 `tca-client complete CLAIM_ID`。客户端核查分支、基线、远程提交、改动路径，以及已声明的 Python 顶层函数和类方法；服务端 Metadata-only GitHub App 无法独立读取私有仓库 diff，因此仍须审阅代码与 A 的报告。团队照常合并，项目创建者核验后确认 `integrated`。
 
 | 状态 | 含义 |
@@ -87,7 +87,9 @@ export TCA_TOKEN="$(tca-codex token --server-url https://YOUR_TCA_HOST/mcp)"
 
 不要把 `TCA_TOKEN`、GitHub token 或私钥放进聊天、仓库和截图。Codex 桌面版若不继承终端变量，应在其启动环境配置 `TCA_TOKEN` 后开启新任务。两人实验须在在线 C 部署包含“项目创建者同时可作 M 和 A”功能的版本，并在两台电脑更新 CLI。
 
-项目创建者先在 M 工作树运行 `tca-codex start --repo PATH --server-url https://YOUR_TCA_HOST/mcp`，将生成的 `AGENTS.md`、`.agents/skills/`、`.tca/project.yaml`、`.gitignore` 提交推送；`.tca/agent-id` 只留本地。随后本人在另一工作树运行 `tca-codex join --role a --repo PATH --server-url https://YOUR_TCA_HOST/mcp`；另一位开发者运行 `tca-codex join --repo PATH --server-url https://YOUR_TCA_HOST/mcp`。各工作树运行 `tca-codex doctor --repo PATH`。M 也可由创建者用 `tca-codex delegate-m` 委派给其他有读取权限的成员。
+项目创建者先在 M 工作树运行 `tca-codex start --repo PATH --server-url https://YOUR_TCA_HOST/mcp`，将生成的 `AGENTS.md`、`.agents/skills/`、`.tca/project.yaml`、`.gitignore` 提交推送；`.tca/agent-id` 只留本地。随后本人在另一工作树运行 `tca-codex join --role a --repo PATH --server-url https://YOUR_TCA_HOST/mcp`；另一位开发者运行 `tca-codex join --repo PATH --server-url https://YOUR_TCA_HOST/mcp`。各工作树运行 `tca-codex doctor --repo PATH`。A 工作树生成的 `.codex/hooks.json` 仅留本机，首次打开 Codex 时在设置中的 Hooks 审核并信任它；未经信任就不会采集。M 也可由创建者用 `tca-codex delegate-m` 委派给其他有读取权限的成员。
+
+已接入旧版本的 A 工作树，更新 CLI 和线上 C 后重新运行 `tca-codex join --repo PATH --server-url https://YOUR_TCA_HOST/mcp --replace-local-config`，再审核新 hook。
 
 ### C 不部署云端
 

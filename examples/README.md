@@ -42,7 +42,7 @@ P1 and P2 first log in to TCA, expose their own `TCA_TOKEN` to Codex, and open *
 | --- | --- | --- |
 | 1 | P1, **A1** chat | Submit upstream Claim; stop before editing. |
 | 2 | P1, **M** chat | Review A1, decide; then resume A1. |
-| 3 | After A1 publishes an uncommitted worktree digest, P2, **A2** chat | Submit downstream Claim from old `main`; do not edit yet. |
+| 3 | After A1's turn ends and the local hook publishes a digest, P2, **A2** chat | Submit downstream Claim from old `main`; do not edit yet. |
 | 4 | P1, **M** chat | Check A1's latest digest and both Claims before advising A2; the digest is not source code. |
 | 5 | P2, **A2** chat | Start after approval and implement independent parts. |
 | 6 | P1, **A1** chat | Push an interface checkpoint and publish a handoff; do not merge `main`. |
@@ -56,7 +56,7 @@ P1 and P2 first log in to TCA, expose their own `TCA_TOKEN` to Codex, and open *
 
 > As read-only M, lease the `stockroom-checkout` coordination task. Read the Claim and necessary baseline code, clarify A1's interface ownership and constraints, and submit advice and a decision with the current round and revision. Do not edit product code or claim to see uncommitted work.
 
-Then tell A1: “Query my Claim again. If allowed, call `start_execution`, implement inventory and tests under the agreed contract, and stop with local uncommitted changes. Do not commit, push, or merge.” Once A1 starts, run `tca-client watch-worktree CLAIM_ID --interval 5` in a **separate terminal in A1's worktree** (replace the Claim ID). When the behavior is clear, run `tca-client snapshot CLAIM_ID --summary "reserve is idempotent by order_id; failures do not deduct stock"`. Confirm that the server Claim has a `worktree_snapshot` before Prompt 3. Keep the watcher running until the Claim ends.
+Then tell A1: “Query my Claim again. If allowed, call `start_execution`, implement inventory and tests under the agreed contract, and stop with local uncommitted changes. Do not commit, push, or merge.” P1 must review and trust the Codex `Stop` hook in A1's worktree. When A1's turn ends, the hook sends a static digest automatically. Confirm that the server Claim has a `worktree_snapshot` before Prompt 3. A does not run a watcher.
 
 **Prompt 3 — A2:**
 
@@ -64,7 +64,7 @@ Then tell A1: “Query my Claim again. If allowed, call `start_execution`, imple
 
 **Prompt 4 — M:**
 
-> A2 has submitted. Read A1 and A2 Claims and the available Git code. Refresh A1's Claim immediately before advising A2; inspect `worktree_snapshot` for API changes, the behavior summary, and `observed_at`. Give A2 actionable advice: who owns the inventory contract, what A2 may edit, how checkout handles success/failure and retries, and what must wait for an interface checkpoint. Treat a missing or stale digest as unknown, and do not treat it as runnable source code. Use the leased task's `coordination_round` and `claim.revision`. Do not interrupt A1.
+> A2 has submitted. Read A1 and A2 Claims and the available Git code. Refresh A1's Claim immediately before advising A2; inspect `worktree_snapshot` for file and API-shape changes and `observed_at`. Give A2 actionable advice: who owns the inventory contract, what A2 may edit, how checkout handles success/failure and retries, and what must wait for an interface checkpoint. Treat a missing or stale digest as unknown, and do not treat it as runnable source code or a complete behavior description. Use the leased task's `coordination_round` and `claim.revision`. Do not interrupt A1.
 
 **Prompt 5 — A2:**
 

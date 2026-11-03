@@ -475,14 +475,15 @@ class Controller:
         if record.state is not ClaimState.EXECUTING:
             raise ValueError("worktree snapshots require an executing claim")
         allowed = {
-            "head", "fingerprint", "changed_paths", "changed_symbols",
-            "api_changes", "outside_scope_count", "truncated", "summary",
+            "head", "fingerprint", "changed_paths", "file_changes", "changed_symbols",
+            "api_changes", "outside_scope_count", "truncated", "turn_id",
         }
         if set(snapshot) - allowed:
             raise ValueError("worktree snapshot contains unsupported fields")
         compact: dict[str, object] = {}
         for key, limit, width in (
             ("changed_paths", 40, 160),
+            ("file_changes", 40, 180),
             ("changed_symbols", 40, 160),
             ("api_changes", 30, 200),
         ):
@@ -507,15 +508,14 @@ class Controller:
         if type(truncated) is not bool:
             raise ValueError("invalid truncated flag")
         compact["truncated"] = truncated
-        summary = snapshot.get("summary", "")
-        if not isinstance(summary, str) or len(summary) > 500:
-            raise ValueError("invalid worktree summary")
+        turn_id = snapshot.get("turn_id", "")
+        if not isinstance(turn_id, str) or len(turn_id) > 128 or "\n" in turn_id:
+            raise ValueError("invalid turn_id")
+        compact["turn_id"] = turn_id
         previous = record.worktree_snapshot or {}
-        same_content = previous.get("fingerprint") == compact["fingerprint"]
-        compact["summary"] = summary or (previous.get("summary", "") if same_content else "")
-        compact["summary_updated_at"] = (
-            self._now_iso() if summary else (previous.get("summary_updated_at", "") if same_content else "")
-        )
+        if turn_id and previous.get("turn_id") == turn_id:
+            return record
+        compact["sequence"] = int(previous.get("sequence", 0)) + 1
         compact["observed_at"] = self._now_iso()
         self.store.update_worktree_snapshot(project_id, claim_id, compact)
         return self.store.get(project_id, claim_id)

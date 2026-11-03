@@ -56,6 +56,9 @@ def test_local_init_uses_real_codex_cli_without_touching_user_config(
     assert (repo / "AGENTS.md").read_text().count(AGENT_NOTE) == 1
     assert ".tca/agent-id" in (repo / ".gitignore").read_text()
     assert (repo / ".agents/skills/tca-coordination/SKILL.md").exists()
+    hook = json.loads((repo / ".codex/hooks.json").read_text())
+    assert "tca.turn_hook" in hook["hooks"]["Stop"][0]["hooks"][0]["command"]
+    assert ".codex/hooks.json" in (repo / ".gitignore").read_text()
     config = subprocess.run(["codex", "mcp", "get", "tca_local", "--json"],
                             text=True, capture_output=True, check=True)
     assert '"type": "stdio"' in config.stdout

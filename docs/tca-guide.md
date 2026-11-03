@@ -16,7 +16,7 @@
 1. A 阅读需求和必要源码，声明目标、planned_paths、owned_symbols、行为契约、依赖与 work_branch。
 2. A 通过 MCP submit_claim 直接提交。Claim 的 base_commit 应是工作分支所用的 Git 基线 SHA。不要创建 tca/claim 分支，不要 push .tca/claim.yaml。
 3. A 用 wait_for_decision 查询权威状态。只有 allowed_actions 含 start_execution，才调用 start_execution 并修改共享代码。
-4. 执行中可 report_progress、publish_handoff；扩大修改范围前修订 Claim。远程 A 在自己的工作树另开终端运行 `tca-client watch-worktree CLAIM_ID --interval 5`。客户端检测未提交改动，最多每 60 秒刷新一次服务端时间戳，只传声明范围内的路径、Python 符号及接口形状摘要，不传源码或 diff；范围外只传数量。行为含义改变时，A 用 `tca-client snapshot CLAIM_ID --summary "简短行为说明"` 补充，不写密钥或源码。M 在协调后来者前重新读取执行中 Claim 的 `worktree_snapshot` 和 `observed_at`。缺失或过期的摘要表示未知；若摘要后代码又变动，旧行为说明自动失效。此机制让 M 了解未提交改动的概况，但下游要使用真实接口仍需可获取的 Git 检查点。
+4. 执行中可 report_progress、publish_handoff；扩大修改范围前修订 Claim。A 工作树的 Codex `Stop` hook 经用户信任后，在每轮结束时静态读取 Git 工作树，只传声明范围内的文件增删、Python 符号及接口签名变化，不传源码或 diff；范围外只传数量。A 不调用监测工具。M 在协调后来者前重新读取执行中 Claim 的 `worktree_snapshot` 和 `observed_at`。缺失或过期的摘要表示未知；尚未结束的一轮也不在快照中。静态摘要不能证明行为语义，下游要使用真实接口仍需可获取的 Git 检查点。
 5. A 在自己的 Git 分支提交并 push。远程部署从工作树运行 `tca-client complete CLAIM_ID`：先核对分支、基线、干净工作树、远程分支头及实际改动路径；对声明了 `owned_symbols` 的 Python 代码，还核对顶层函数和类方法的变化。服务端校验所报路径和符号是否属于 Claim，但元数据只读的 GitHub App 无法独立读取私有仓库 diff，因此仍信任 A 的报告。非 Python 语言、模块级语句和更细的语义约束仍须审阅。`completed` 不表示已经进入默认分支；超时进入 `expired`，不再假称完成。超时后仍可用 Git 完成凭据补报交付。
 6. 团队照常合并；项目创建者核验后调用 integrate_claim。可选的签名 push webhook 只负责集成通知。
 
@@ -30,11 +30,13 @@ C 的状态始终是唯一权威。M 通过 wait_for_coordination_task 收取任
 
 远程登录使用用户 GitHub 账号已登记的 Ed25519 SSH 公钥。客户端签署五分钟有效、只能使用一次的 TCA 挑战；服务端验签后签发八小时 TCA 专用会话，仅保存 token 哈希。每次项目操作重新检查 GitHub 仓库权限。不要把 gh auth token 或 GitHub 私钥发给 TCA。
 
-服务器运营方仍能读取 TCA 数据库中的 Claim、工作树摘要、建议和事件；单靠签名认证并不提供内容端到端保密。工作树摘要含文件名、符号名和 A 自写的行为说明，不能视为秘密。共享仓库成员本来就可能读取彼此已 push 的代码。需要私密需求时，只把必要的协调摘要发给 TCA。Git 历史也不是保密边界。
+服务器运营方仍能读取 TCA 数据库中的 Claim、工作树摘要、建议和事件；单靠签名认证并不提供内容端到端保密。工作树摘要含文件名、符号名和接口形状，不能视为秘密。共享仓库成员本来就可能读取彼此已 push 的代码。需要私密需求时，只把必要的协调摘要发给 TCA。Git 历史也不是保密边界。
+
+快照的生成由 Codex `Stop` hook 触发，模型没有快照 MCP 工具；但 hook 与 Codex 使用同一个操作系统用户，具备终端权限的恶意进程仍可能伪造 HTTP 上报。此版本提供流程隔离与减少上下文，不提供针对本机恶意 A 的强安全隔离。要做到后者，需要把采集凭据放到另一个操作系统身份的进程中。
 
 ## 历史
 
-每版 Claim 存入 claim_revisions；Claim 提交及状态转换存入 claim_events。成员可用 list_claim_revisions 和 list_claim_events 查看。记录是数据库级追加历史，不宣称抵抗数据库管理员篡改；如需独立公证，可在外部定期导出并签名摘要。
+每版 Claim 存入 claim_revisions；Claim 提交、状态转换和每轮工作树摘要存入 claim_events。成员可用 list_claim_revisions 和 list_claim_events 查看。当前快照另存于 Claim 记录，供 M 快速读取。记录是数据库级追加历史，不宣称抵抗数据库管理员篡改；如需独立公证，可在外部定期导出并签名摘要。
 
 ## 部署
 

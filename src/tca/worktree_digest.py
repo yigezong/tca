@@ -22,18 +22,33 @@ def _git(repo: Path, *args: str) -> bytes:
 def _annotation(node: ast.expr | None) -> str:
     if isinstance(node, ast.Name):
         return node.id[:40]
+    if isinstance(node, ast.Constant) and node.value is None:
+        return "None"
     if isinstance(node, ast.Attribute):
         return node.attr[:40]
+    if isinstance(node, ast.Subscript):
+        base = _annotation(node.value)
+        if base == "Literal":
+            return "Literal[?]"
+        return f"{base}[{_annotation(node.slice)}]"[:60]
+    if isinstance(node, ast.Tuple):
+        return ",".join(_annotation(item) for item in node.elts)[:60]
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        return f"{_annotation(node.left)}|{_annotation(node.right)}"[:60]
     return "?" if node is not None else ""
 
 
 def _shape(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
-    names = [arg.arg for arg in (*node.args.posonlyargs, *node.args.args)]
+    def label(arg: ast.arg) -> str:
+        annotation = _annotation(arg.annotation)
+        return arg.arg + (":" + annotation if annotation else "")
+
+    names = [label(arg) for arg in (*node.args.posonlyargs, *node.args.args)]
     if node.args.vararg:
-        names.append("*" + node.args.vararg.arg)
-    names.extend(arg.arg for arg in node.args.kwonlyargs)
+        names.append("*" + label(node.args.vararg))
+    names.extend(label(arg) for arg in node.args.kwonlyargs)
     if node.args.kwarg:
-        names.append("**" + node.args.kwarg.arg)
+        names.append("**" + label(node.args.kwarg))
     result = f"({','.join(names)})"
     if node.returns is not None:
         result += "->" + _annotation(node.returns)
@@ -75,6 +90,7 @@ def build_worktree_digest(repo: Path, claim: dict[str, object]) -> dict[str, obj
     fingerprint.update(str(outside).encode())
     changed_symbols: list[str] = []
     api_changes: list[str] = []
+    file_changes: list[str] = []
     truncated = len(in_scope) > 40
     for path in in_scope[:40]:
         if len(path) > 160 or "\n" in path or "\r" in path:
@@ -87,6 +103,14 @@ def build_worktree_digest(repo: Path, claim: dict[str, object]) -> dict[str, obj
             content = b""
         fingerprint.update(path.encode())
         fingerprint.update(hashlib.sha256(content).digest())
+        existed = subprocess.run(
+            ["git", "-C", str(repo), "cat-file", "-e", f"HEAD:{path}"],
+            capture_output=True, check=False, timeout=20,
+        ).returncode == 0
+        kind = "modified" if existed and local.is_file() else (
+            "deleted" if existed else "added"
+        )
+        file_changes.append(f"{kind}: {path}")
         if not path.endswith(".py") or len(content) > 262_144:
             if len(content) > 262_144:
                 truncated = True
@@ -115,6 +139,7 @@ def build_worktree_digest(repo: Path, claim: dict[str, object]) -> dict[str, obj
         "head": head,
         "fingerprint": fingerprint.hexdigest(),
         "changed_paths": [path for path in in_scope[:40] if len(path) <= 160 and "\n" not in path and "\r" not in path],
+        "file_changes": file_changes,
         "changed_symbols": changed_symbols[:40],
         "api_changes": [item[:200] for item in api_changes[:30]],
         "outside_scope_count": outside,

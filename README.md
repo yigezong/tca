@@ -8,7 +8,7 @@ One developer is changing an inventory module and may change its `reserve()` API
 
 TCA lets developers **disclose intent before editing shared code**. The upstream developer submits a Claim describing planned files, behavior, interfaces, and uncertainty. A coordinator uses those disclosures to assign responsibility and advise the downstream developer. When exact code is needed, the upstream developer can commit and push a small, stable **interface checkpoint** on their own branch without finishing or merging the whole feature.
 
-**Limit:** TCA does not read uncommitted source on someone else's computer. A can periodically report a timestamped **worktree digest**: changed files within the Claim, Python function/method and parameter-shape changes, and a short A-authored behavior summary. M can spot a changing interface but cannot reconstruct the implementation from the digest. The Claim conveys intent; the digest conveys current change metadata; a Git checkpoint makes actual interface code available.
+**Limit:** TCA does not read uncommitted source on someone else's computer. A local hook automatically sends a timestamped **worktree digest** after each Codex turn: file additions/deletions within the Claim and Python function/method and signature changes. M can spot a changing interface but cannot reconstruct the implementation or infer its full behavior from the digest. The Claim conveys intent; the digest conveys metadata as of the last finished turn; a Git checkpoint makes actual interface code available.
 
 ## Roles and the harness
 
@@ -29,7 +29,7 @@ flowchart TD
     C -->|coordination needed| M["M: read Claims, committed code, and latest worktree digests"]
     M -->|advice and decision| C
     C -->|approved then start_execution| D["A: develop on own Git branch"]
-    D -->|bounded digest of uncommitted changes| C
+    D -->|local Stop hook after each turn: bounded digest| C
     C -->|dependency or requirements unclear| W["wait before editing"]
     D -->|optional: commit/push stable interface| H["Git: interface checkpoint, still unmerged"]
     H -->|publish_handoff and reassess dependencies| C
@@ -47,7 +47,7 @@ A creator with write permission may run **one read-only M and one A in separate 
 
 1. A sends a **Claim** directly to the TCA MCP server: goal, planned paths and symbols, behavior contract, dependencies, Git base commit, and work branch. A Claim branch or webhook is unnecessary.
 2. C checks declared boundaries. When coordination is needed, M leases a task, sends advice to the relevant A, and submits a decision. A calls `wait_for_decision` or `get_claim_state`. Shared edits require `allowed_actions` to contain `start_execution`, followed by an actual `start_execution` call.
-3. A develops on their own branch and may report progress. In hosted mode, after `start_execution`, run `tca-client watch-worktree CLAIM_ID --interval 5` in a **separate terminal in A's worktree**; `tca-client snapshot CLAIM_ID --summary "brief behavior update"` adds semantic detail. M receives the latest digest with a server timestamp and must treat missing or stale digests as unknown. A later code change invalidates the old behavior summary. When another A needs actual interface code, the owner commits and pushes a checkpoint, then calls `publish_handoff` with its SHA, exported symbols, and behavior contract. The owner can continue developing afterward.
+3. A develops on their own branch and may report progress. `tca-codex` installs a local Codex `Stop` hook in A's worktree; the user must review and trust it in Codex. After each turn, the hook sends C bounded Git and Python API metadata, including file additions/deletions and signature changes. A does not run a watcher or receive an MCP snapshot tool. M receives the latest digest with a server timestamp and must treat missing or stale digests as unknown. Static metadata does not establish behavior semantics. When another A needs actual interface code, the owner commits and pushes a checkpoint, then calls `publish_handoff` with its SHA, exported symbols, and behavior contract. The owner can continue developing afterward.
 4. A commits and pushes completed work. In hosted mode, `tca-client complete CLAIM_ID` checks the branch, base, clean worktree, remote head, changed paths, and declared top-level Python symbols. The Metadata-only GitHub App cannot independently read private diffs, so code and the reported evidence still need review. The team merges normally; the creator verifies integration.
 
 | State | Meaning |
@@ -87,7 +87,9 @@ export TCA_TOKEN="$(tca-codex token --server-url https://YOUR_TCA_HOST/mcp)"
 
 Never put the session token, GitHub token, or private key in chat, repository files, or screenshots. Codex Desktop may need `TCA_TOKEN` set in its own launch environment and a new chat. For the two-person experiment, deploy the version of C that permits a writing creator to act as M and A, and update the CLI on both computers.
 
-The creator runs `tca-codex start --repo PATH --server-url https://YOUR_TCA_HOST/mcp` in an M checkout, then commits the generated `AGENTS.md`, `.agents/skills/`, `.tca/project.yaml`, and `.gitignore`. `.tca/agent-id` remains local. In a separate checkout, the same person runs `tca-codex join --role a --repo PATH --server-url ...`; the other developer runs `tca-codex join --repo PATH --server-url ...`. Use `tca-codex doctor --repo PATH` in every checkout. The creator may instead delegate M to another repository reader.
+The creator runs `tca-codex start --repo PATH --server-url https://YOUR_TCA_HOST/mcp` in an M checkout, then commits the generated `AGENTS.md`, `.agents/skills/`, `.tca/project.yaml`, and `.gitignore`. `.tca/agent-id` remains local. In a separate checkout, the same person runs `tca-codex join --role a --repo PATH --server-url ...`; the other developer runs `tca-codex join --repo PATH --server-url ...`. Use `tca-codex doctor --repo PATH` in every checkout. An A checkout's `.codex/hooks.json` stays local; review and trust its hook in Codex Settings > Hooks when opening the checkout. Capture does not run until trusted. The creator may instead delegate M to another repository reader.
+
+For an existing A checkout, update the CLI and hosted C, rerun `tca-codex join --repo PATH --server-url https://YOUR_TCA_HOST/mcp --replace-local-config`, then review the new hook.
 
 ### C without cloud hosting
 

@@ -13,6 +13,7 @@ from starlette.testclient import TestClient
 
 from tca.app import create_app
 from tca.controller import Controller
+from tca.domain import Claim, ClaimState, Decision
 from tca.mcp_server import create_mcp
 from tca.project_access import GitHubAccess, Principal, ProjectAccess, TcaIdentity, current_principal
 from tca.rules import BasicRuleChecker
@@ -253,16 +254,10 @@ async def test_mcp_enforces_single_developer_identity_and_owner_role(tmp_path) -
             await mcp.call_tool("submit_claim", {"claim": {**claim, "claim_id": "feature-2",
                 "author": "agent-bob", "work_branch": "feature/agent-bob/feature-2"}})
         await mcp.call_tool("start_execution", {"project_id": "org/repo", "claim_id": "feature-1"})
-        await mcp.call_tool("report_worktree_snapshot", {
-            "project_id": "org/repo", "claim_id": "feature-1",
-            "snapshot": {
-                "head": "a" * 40, "fingerprint": "b" * 64,
-                "changed_paths": ["src/example.py"],
-                "changed_symbols": ["src/example.py:build"],
-                "api_changes": [], "outside_scope_count": 0,
-                "truncated": False,
-            },
-        })
+        with pytest.raises(ToolError, match="Unknown tool"):
+            await mcp.call_tool("report_worktree_snapshot", {
+                "project_id": "org/repo", "claim_id": "feature-1", "snapshot": {},
+            })
         with pytest.raises(ToolError, match="hosted completion requires"):
             await mcp.call_tool("complete_claim", {"project_id": "org/repo", "claim_id": "feature-1"})
         await mcp.call_tool("complete_claim", {"project_id": "org/repo", "claim_id": "feature-1",
@@ -275,10 +270,10 @@ async def test_mcp_enforces_single_developer_identity_and_owner_role(tmp_path) -
 
     token = current_principal.set(Principal("bob"))
     try:
-        with pytest.raises(ToolError, match="agent-bob"):
+        with pytest.raises(ToolError, match="Unknown tool"):
             await mcp.call_tool("report_worktree_snapshot", {
                 "project_id": "org/repo", "claim_id": "feature-1",
-                "snapshot": {"head": "a" * 40, "fingerprint": "b" * 64},
+                "snapshot": {},
             })
         with pytest.raises(ToolError, match="agent-bob"):
             await mcp.call_tool("start_execution", {"project_id": "org/repo",
@@ -371,3 +366,54 @@ def test_github_mode_project_api(monkeypatch, tmp_path) -> None:
         assert result.status_code == 200, result.text
         assert "GitHub authentication is required" not in result.text
         assert "claim not found" in result.text or "missing" in result.text
+
+
+def test_turn_capture_http_is_scoped_to_executing_claim_owner(monkeypatch, tmp_path) -> None:
+    store = ClaimStore(tmp_path / "capture.db")
+    controller = Controller(store, BasicRuleChecker())
+    monkeypatch.setattr("tca.app.build_components", lambda: (controller, None))
+    monkeypatch.setenv("TCA_AUTH_MODE", "github")
+    monkeypatch.setenv("TCA_ALLOWED_HOSTS", "testserver")
+    owner = current_principal.set(Principal("owner"))
+    try:
+        ProjectAccess(store, FakeGitHub()).start("org/repo")
+    finally:
+        current_principal.reset(owner)
+    claim = Claim.from_mapping({
+        "claim_id": "feature-1", "project_id": "org/repo",
+        "author": "agent-alice", "base_commit": "abc123",
+        "work_branch": "feature/agent-alice/feature-1",
+        "goal": "Update inventory", "planned_paths": ["src/inventory.py"],
+        "coordination_group": "demo",
+    })
+    controller.submit_claim(claim)
+    controller.submit_coordination_decision(
+        "org/repo", "feature-1", Decision(ClaimState.APPROVED, "reviewed")
+    )
+    controller.start_execution("org/repo", "feature-1")
+
+    def headers(login: str) -> dict[str, str]:
+        raw = "tca_" + login
+        store.create_auth_session(hashlib.sha256(raw.encode()).hexdigest(), login)
+        return {"Authorization": f"Bearer {raw}"}
+
+    with TestClient(create_app(github_override=FakeGitHub())) as client:
+        route = "/api/projects/org/repo/turn-capture"
+        alice, bob, reader = headers("alice"), headers("bob"), headers("reader")
+        found = client.get(route, params={"branch": claim.work_branch}, headers=alice)
+        assert found.status_code == 200
+        assert found.json()["claim"]["claim"]["claim_id"] == "feature-1"
+        assert client.get(route, params={"branch": claim.work_branch}, headers=bob).json() == {"claim": None}
+        assert client.get(route, params={"branch": claim.work_branch}, headers=reader).status_code == 403
+        snapshot = {"head": "a" * 40, "fingerprint": "b" * 64,
+                    "changed_paths": ["src/inventory.py"],
+                    "file_changes": ["modified: src/inventory.py"],
+                    "api_changes": ["src/inventory.py:reserve: (sku)->(sku,order_id)"],
+                    "changed_symbols": [], "outside_scope_count": 0,
+                    "truncated": False, "turn_id": "turn-1"}
+        upload = route.replace("turn-capture", "claims/feature-1/turn-capture")
+        assert client.post(upload, json={"snapshot": snapshot}, headers=bob).status_code == 403
+        result = client.post(upload, json={"snapshot": snapshot}, headers=alice)
+        assert result.status_code == 200, result.text
+        assert result.json()["worktree_snapshot"]["sequence"] == 1
+        assert client.post(upload, json={"snapshot": snapshot}, headers=alice).json()["worktree_snapshot"]["sequence"] == 1
