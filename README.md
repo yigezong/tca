@@ -21,7 +21,26 @@ The **harness** is the set of rules around a normal coding agent such as Codex: 
 | **C, controller** | Maintain the authoritative state, check rules and permissions, apply M's decisions, and reject stale coordination results. C does not replace code review or Git integration. |
 | **Project creator** | Start a project with repository admin permission, optionally delegate M, and verify final integration. |
 
-A creator with write permission may run **one read-only M and one A in separate worktrees**. This permits a two-person, two-computer experiment: one person runs M and A1; the other runs A2. Each person commits only with their own GitHub identity.
+This diagram shows where the harness acts. Every A submits their own Claim. M helps decide coordinated work; C can release independent work directly and may still give M a nonblocking observation task.
+
+```mermaid
+flowchart TD
+    A["A: submit a Claim with plan, scope, and interface"] --> C["C: check permission and Claim state"]
+    C -->|coordination needed| M["M: read Claims and committed code; advise on ownership and interfaces"]
+    M -->|advice and decision| C
+    C -->|approved then start_execution| D["A: develop on own Git branch"]
+    C -->|dependency or requirements unclear| W["wait before editing"]
+    D -->|optional: commit/push stable interface| H["Git: interface checkpoint, still unmerged"]
+    H -->|publish_handoff and reassess dependencies| C
+    H -->|other A can fetch| R["downstream sees actual interface code"]
+    D -->|commit/push finished work| G["Git: separate work branches"]
+    G --> I["team merges and runs tests"]
+    I -->|verified| F["C: record integrated"]
+```
+
+**Uncommitted code remains on its developer's computer.** M, C, and other A can read the disclosed Claim, but cannot obtain that code from it. The owner publishes a Git checkpoint when a downstream developer needs the actual interface; that developer still needs their own authorization to start.
+
+A creator with write permission may run **one read-only M and one A in separate worktrees**. Each developer commits only with their own GitHub identity.
 
 ## Protocol and key states
 
