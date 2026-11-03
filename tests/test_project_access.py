@@ -52,8 +52,10 @@ def test_owner_starts_project_and_developers_join_by_repo_permission(tmp_path) -
     try:
         assert access.start("org/repo")["role"] == "m"
         assert access.join("org/repo")["agent_id"] == "agent-m"
-        with pytest.raises(PermissionError, match="A role"):
-            access.require("org/repo", "a")
+        assert access.join("org/repo", "a")["agent_id"] == "agent-owner"
+        access.require("org/repo", "a", "agent-owner")
+        with pytest.raises(PermissionError, match="agent-owner"):
+            access.require("org/repo", "a", "agent-alice")
     finally:
         current_principal.reset(token)
 
@@ -85,6 +87,8 @@ def test_owner_starts_project_and_developers_join_by_repo_permission(tmp_path) -
     token = current_principal.set(Principal("reader"))
     try:
         assert access.join("org/repo")["agent_id"] == "agent-m"
+        with pytest.raises(PermissionError, match="write access"):
+            access.join("org/repo", "a")
     finally:
         current_principal.reset(token)
 
@@ -145,6 +149,79 @@ def test_github_app_uses_metadata_only_installation_token(monkeypatch) -> None:
     assert len(requests) == 4  # cached installation token, fresh permission check
     assert requests[1][2] == {"repositories": ["repo"], "permissions": {"metadata": "read"}}
     assert requests[2][1] == "installation-token"
+
+
+@pytest.mark.anyio
+async def test_writing_owner_can_coordinate_and_develop_in_separate_worktrees(tmp_path) -> None:
+    store = ClaimStore(tmp_path / "dual-role.db")
+    access = ProjectAccess(store, FakeGitHub())
+    controller = Controller(store, BasicRuleChecker())
+    mcp = create_mcp(controller, access)
+    token = current_principal.set(Principal("owner"))
+    try:
+        access.start("org/repo")
+        assert access.join("org/repo", "m")["agent_id"] == "agent-m"
+        assert access.join("org/repo", "a")["agent_id"] == "agent-owner"
+        claim = {
+            "claim_id": "owner-feature", "project_id": "org/repo",
+            "author": "agent-owner", "base_commit": "abc123",
+            "work_branch": "feature/agent-owner/owner-feature",
+            "goal": "Implement owner feature", "planned_paths": ["src/owner.py"],
+            "coordination_group": "demo",
+        }
+        await mcp.call_tool("submit_claim", {"claim": claim})
+        task = controller.lease_coordination_task("org/repo", "agent-m")
+        assert task is not None
+        await mcp.call_tool("submit_coordination_decision", {
+            "project_id": "org/repo", "claim_id": "owner-feature",
+            "state": "approved", "reason": "M reviewed the contract",
+            "worker_id": "agent-m", "expected_round": task.coordination_round,
+            "expected_revision": task.claim.revision,
+        })
+        await mcp.call_tool("start_execution", {
+            "project_id": "org/repo", "claim_id": "owner-feature",
+        })
+    finally:
+        current_principal.reset(token)
+
+    token = current_principal.set(Principal("alice"))
+    try:
+        assert access.join("org/repo")["agent_id"] == "agent-alice"
+        await mcp.call_tool("submit_claim", {"claim": {
+            "claim_id": "alice-feature", "project_id": "org/repo",
+            "author": "agent-alice", "base_commit": "abc123",
+            "work_branch": "feature/agent-alice/alice-feature",
+            "goal": "Use the owner's changing interface",
+            "planned_paths": ["src/owner.py", "src/checkout.py"],
+            "coordination_group": "demo",
+        }})
+        assert controller.get_claim_state("org/repo", "alice-feature")["state"] == "assessing"
+    finally:
+        current_principal.reset(token)
+
+    token = current_principal.set(Principal("owner"))
+    try:
+        task = controller.lease_coordination_task("org/repo", "agent-m")
+        assert task is not None
+        assert task.claim.claim.claim_id == "alice-feature"
+        await mcp.call_tool("submit_coordination_decision", {
+            "project_id": "org/repo", "claim_id": "alice-feature",
+            "state": "approved_with_constraints", "reason": "Respect A1's interface",
+            "constraints": ["Only edit checkout.py"], "worker_id": "agent-m",
+            "expected_round": task.coordination_round,
+            "expected_revision": task.claim.revision,
+        })
+        assert controller.get_claim_state("org/repo", "owner-feature")["state"] == "executing"
+    finally:
+        current_principal.reset(token)
+
+    token = current_principal.set(Principal("alice"))
+    try:
+        await mcp.call_tool("start_execution", {
+            "project_id": "org/repo", "claim_id": "alice-feature",
+        })
+    finally:
+        current_principal.reset(token)
 
 
 @pytest.mark.anyio
@@ -224,6 +301,10 @@ def test_github_mode_project_api(monkeypatch, tmp_path) -> None:
                            headers=headers("alice")).status_code == 403
         assert client.post("/api/projects", json={"project_id": "org/repo"},
                            headers=headers("owner")).status_code == 201
+        dual = client.post("/api/projects/org/repo/join", json={"role": "a"},
+                           headers=headers("owner"))
+        assert dual.status_code == 200, dual.text
+        assert dual.json()["agent_id"] == "agent-owner"
         delegated = client.post("/api/projects/org/repo/manager", json={"login": "bob"},
                                 headers=headers("owner"))
         assert delegated.status_code == 200, delegated.text

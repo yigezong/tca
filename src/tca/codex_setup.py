@@ -282,11 +282,12 @@ def doctor(args: argparse.Namespace) -> int:
         elif token_env == "TCA_TOKEN":
             try:
                 project_id = config.get("project_id", "")
+                identity = (repo / ".tca" / "agent-id").read_text().strip()
                 joined = _project_api(
                     config["mcp"]["url"], token,
-                    f"/api/projects/{urllib.parse.quote(project_id, safe='/')}/join", {},
+                    f"/api/projects/{urllib.parse.quote(project_id, safe='/')}/join",
+                    {"role": "m" if identity == "agent-m" else "a"},
                 )
-                identity = (repo / ".tca" / "agent-id").read_text().strip()
                 if joined.get("agent_id") != identity:
                     issues.append("local agent identity differs from GitHub project role")
             except (SetupError, OSError, KeyError) as exc:
@@ -432,7 +433,7 @@ def project_command(args: argparse.Namespace) -> None:
             raise SetupError("join requires --repo")
         encoded = urllib.parse.quote(project_id, safe="/")
         result = _project_api(args.server_url, token,
-                              f"/api/projects/{encoded}/join", {})
+                              f"/api/projects/{encoded}/join", {"role": args.role} if args.role else {})
         agent_id = str(result["agent_id"])
     setup(argparse.Namespace(
         repo=repo, agent_id=agent_id, project_id=project_id, mode="remote",
@@ -471,6 +472,9 @@ def main() -> None:
                                  default=Path.cwd() if name == "join" else None)
             command.add_argument("--replace-mcp", action="store_true")
             command.add_argument("--replace-local-config", action="store_true")
+            if name == "join":
+                command.add_argument("--role", choices=("a", "m"),
+                                     help="choose A or M when the account has both permissions")
             if name in {"start", "delegate-m"}:
                 command.add_argument("--project-id", help="GitHub owner/repo; no local clone required")
             if name == "delegate-m":

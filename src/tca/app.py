@@ -227,8 +227,13 @@ def create_app(github_override=None):
             return JSONResponse({"error": "GitHub project mode is disabled"}, status_code=404)
         project_id = request.path_params["owner"] + "/" + request.path_params["repo"]
         try:
-            return JSONResponse(await asyncio.to_thread(access.join, project_id))
-        except PermissionError as exc:
+            data = await request.json()
+            if not isinstance(data, dict):
+                raise ValueError("join request must be a JSON object")
+            return JSONResponse(await asyncio.to_thread(
+                access.join, project_id, data.get("role") or None
+            ))
+        except (PermissionError, ValueError) as exc:
             return JSONResponse({"error": str(exc)}, status_code=403)
 
     async def github_webhook(request: Request) -> JSONResponse:

@@ -268,7 +268,13 @@ class ProjectAccess:
 
     def require(self, project_id: str, role: str, author: str | None = None) -> None:
         actual = self.role(project_id)
-        if actual != role:
+        if role == "a":
+            # A project owner may coordinate in one worktree and develop in
+            # another. GitHub write access still binds A to one account.
+            permissions = self.github.permissions(self.principal(), project_id.lower())
+            if not any(permissions.get(key) for key in ("push", "maintain", "admin")):
+                raise PermissionError("this operation requires the project A role and repository write access")
+        elif actual != role:
             raise PermissionError(f"this operation requires the project {role.upper()} role")
         if role == "a" and author is not None:
             expected = "agent-" + self.principal().login.lower()
@@ -280,9 +286,12 @@ class ProjectAccess:
         claim = self.store.get(project_id.lower(), claim_id).claim
         self.require(project_id, "a", claim.author)
 
-    def join(self, project_id: str) -> dict:
+    def join(self, project_id: str, requested_role: str | None = None) -> dict:
         project_id = project_id.lower()
-        role = self.role(project_id)
+        role = requested_role or self.role(project_id)
+        if role not in {"a", "m"}:
+            raise ValueError("role must be a or m")
+        self.require(project_id, role)
         principal = self.principal()
         return {"project_id": project_id, "role": role,
                 "agent_id": "agent-m" if role == "m" else "agent-" + principal.login.lower(),
