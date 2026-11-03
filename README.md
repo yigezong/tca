@@ -8,7 +8,7 @@ One developer is changing an inventory module and may change its `reserve()` API
 
 TCA lets developers **disclose intent before editing shared code**. The upstream developer submits a Claim describing planned files, behavior, interfaces, and uncertainty. A coordinator uses those disclosures to assign responsibility and advise the downstream developer. When exact code is needed, the upstream developer can commit and push a small, stable **interface checkpoint** on their own branch without finishing or merging the whole feature.
 
-**Limit:** TCA cannot read uncommitted files on someone else's computer. A Claim tells the team what its author plans to do; a Git checkpoint makes an actual interface available. If the interface is still unstable, the downstream developer must wait for a checkpoint instead of assuming the latest code is visible.
+**Limit:** TCA does not read uncommitted source on someone else's computer. A can periodically report a timestamped **worktree digest**: changed files within the Claim, Python function/method and parameter-shape changes, and a short A-authored behavior summary. M can spot a changing interface but cannot reconstruct the implementation from the digest. The Claim conveys intent; the digest conveys current change metadata; a Git checkpoint makes actual interface code available.
 
 ## Roles and the harness
 
@@ -17,7 +17,7 @@ The **harness** is the set of rules around a normal coding agent such as Codex: 
 | Role | Responsibility |
 | --- | --- |
 | **A, developer** | Submit a Claim, then develop and push code on their own Git branch after authorization. One computer runs at most one code-committing A. |
-| **M, coordinator** | Read Claims and necessary code, clarify ownership, interface, dependencies, and acceptance conditions. M does not commit product code or see uncommitted files. |
+| **M, coordinator** | Read Claims, committed code, and bounded digests of A's uncommitted work; clarify ownership, interface, dependencies, and acceptance conditions. M does not commit product code or receive uncommitted source. |
 | **C, controller** | Maintain the authoritative state, check rules and permissions, apply M's decisions, and reject stale coordination results. C does not replace code review or Git integration. |
 | **Project creator** | Start a project with repository admin permission, optionally delegate M, and verify final integration. |
 
@@ -26,9 +26,10 @@ This diagram shows where the harness acts. Every A submits their own Claim. M he
 ```mermaid
 flowchart TD
     A["A: submit a Claim with plan, scope, and interface"] --> C["C: check permission and Claim state"]
-    C -->|coordination needed| M["M: read Claims and committed code; advise on ownership and interfaces"]
+    C -->|coordination needed| M["M: read Claims, committed code, and latest worktree digests"]
     M -->|advice and decision| C
     C -->|approved then start_execution| D["A: develop on own Git branch"]
+    D -->|bounded digest of uncommitted changes| C
     C -->|dependency or requirements unclear| W["wait before editing"]
     D -->|optional: commit/push stable interface| H["Git: interface checkpoint, still unmerged"]
     H -->|publish_handoff and reassess dependencies| C
@@ -38,7 +39,7 @@ flowchart TD
     I -->|verified| F["C: record integrated"]
 ```
 
-**Uncommitted code remains on its developer's computer.** M, C, and other A can read the disclosed Claim, but cannot obtain that code from it. The owner publishes a Git checkpoint when a downstream developer needs the actual interface; that developer still needs their own authorization to start.
+**Uncommitted source remains on its developer's computer.** Digests contain limited file, symbol, and API-shape metadata, not the complete code. The owner publishes a Git checkpoint when a downstream developer needs the actual interface; that developer still needs their own authorization to start.
 
 A creator with write permission may run **one read-only M and one A in separate worktrees**. Each developer commits only with their own GitHub identity.
 
@@ -46,7 +47,7 @@ A creator with write permission may run **one read-only M and one A in separate 
 
 1. A sends a **Claim** directly to the TCA MCP server: goal, planned paths and symbols, behavior contract, dependencies, Git base commit, and work branch. A Claim branch or webhook is unnecessary.
 2. C checks declared boundaries. When coordination is needed, M leases a task, sends advice to the relevant A, and submits a decision. A calls `wait_for_decision` or `get_claim_state`. Shared edits require `allowed_actions` to contain `start_execution`, followed by an actual `start_execution` call.
-3. A develops on their own branch and may report progress. If another A needs a stable interface early, the owner commits and pushes an interface checkpoint, then calls `publish_handoff` with its SHA, exported symbols, and behavior contract. The owner can continue developing afterward.
+3. A develops on their own branch and may report progress. In hosted mode, after `start_execution`, run `tca-client watch-worktree CLAIM_ID --interval 5` in a **separate terminal in A's worktree**; `tca-client snapshot CLAIM_ID --summary "brief behavior update"` adds semantic detail. M receives the latest digest with a server timestamp and must treat missing or stale digests as unknown. A later code change invalidates the old behavior summary. When another A needs actual interface code, the owner commits and pushes a checkpoint, then calls `publish_handoff` with its SHA, exported symbols, and behavior contract. The owner can continue developing afterward.
 4. A commits and pushes completed work. In hosted mode, `tca-client complete CLAIM_ID` checks the branch, base, clean worktree, remote head, changed paths, and declared top-level Python symbols. The Metadata-only GitHub App cannot independently read private diffs, so code and the reported evidence still need review. The team merges normally; the creator verifies integration.
 
 | State | Meaning |

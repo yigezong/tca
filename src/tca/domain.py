@@ -234,6 +234,7 @@ class ClaimRecord:
     last_heartbeat: str = field(default="")
     progress: str = field(default="")
     handoff: Handoff | None = None
+    worktree_snapshot: dict[str, Any] | None = None
 
     def to_mapping(self) -> dict[str, Any]:
         return {
@@ -246,6 +247,7 @@ class ClaimRecord:
             "last_heartbeat": self.last_heartbeat,
             "progress": self.progress,
             "handoff": self.handoff.to_mapping() if self.handoff else None,
+            "worktree_snapshot": self.worktree_snapshot,
         }
 
 
@@ -341,7 +343,7 @@ def allowed_actions(state: ClaimState) -> tuple[str, ...]:
         ClaimState.WAITING: ("get_claim_state",),
         ClaimState.NEEDS_HUMAN: ("get_claim_state",),
         ClaimState.BLOCKED: ("get_claim_state",),
-        ClaimState.EXECUTING: ("report_progress", "publish_handoff", "complete_claim", "request_requirements_clarification", "record_subgoal_event", "get_integration_context"),
+        ClaimState.EXECUTING: ("report_progress", "report_worktree_snapshot", "publish_handoff", "complete_claim", "request_requirements_clarification", "record_subgoal_event", "get_integration_context"),
         ClaimState.EXPIRED: ("complete_claim",),
         ClaimState.COMPLETED: (),
         ClaimState.INTEGRATED: (),

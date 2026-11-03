@@ -42,8 +42,8 @@ tca-codex doctor --repo ./stockroom-a2
 | --- | --- | --- |
 | 1 | P1 的 **A1** Codex | 披露 Claim，停在待协调状态；不要先改代码。 |
 | 2 | P1 的 **M** Codex | 领取 A1 任务，确认拟议接口和责任；随后让 A1 继续。 |
-| 3 | A1 报告本地未提交改动后，P2 的 **A2** Codex | 从旧主分支提交下游 Claim；先不写代码。 |
-| 4 | P1 的 **M** Codex | 根据 A1/A2 Claim 给 A2 明确接口和文件责任，不假称看到了 A1 未提交代码。 |
+| 3 | A1 发布未提交工作树摘要后，P2 的 **A2** Codex | 从旧主分支提交下游 Claim；先不写代码。 |
+| 4 | P1 的 **M** Codex | 查看 A1 最新摘要和 A1/A2 Claim，给 A2 明确接口和文件责任；摘要不是源码。 |
 | 5 | P2 的 **A2** Codex | 获准后写独立部分；需要精确上游实现时等接口检查点。 |
 | 6 | P1 的 **A1** Codex | commit/push 稳定接口检查点并 `publish_handoff`，仍不合并主分支。 |
 | 7 | 两边各自完成；P1 做临时集成 | 合并两条分支、运行测试、核对功能，再决定是否合入主分支。 |
@@ -56,7 +56,7 @@ tca-codex doctor --repo ./stockroom-a2
 
 > 作为只读 M，领取 `stockroom-checkout` 的协调任务，阅读 Claim 与必要的基线代码。给 A1 明确接口责任和约束，提交当前轮次的建议与决定。不要修改业务代码，也不要把尚未提交的工作树当成你已看见的代码。
 
-M 提交决定后，再发给 A1：“重新查询我的 Claim；若允许，调用 `start_execution`，按已批准的契约开发库存和测试。暂时停在本机未提交状态，报告已改文件；不要 commit、push 或 merge。”确认 A1 已报告本机改动，才进入第 3 步。
+M 提交决定后，再发给 A1：“重新查询我的 Claim；若允许，调用 `start_execution`，按已批准的契约开发库存和测试。暂时停在本机未提交状态；不要 commit、push 或 merge。”A1 开工后，在 **A1 工作树的另一个终端**运行 `tca-client watch-worktree CLAIM_ID --interval 5`（用真实 Claim ID 替换）；接口行为确定后运行 `tca-client snapshot CLAIM_ID --summary "reserve 使用 order_id 幂等；失败不扣库存"`。确认服务端 Claim 的 `worktree_snapshot` 已更新，再进入第 3 步。监测终端保持运行到 Claim 结束。
 
 **第 3 步，P2 发给 A2：**
 
@@ -64,7 +64,7 @@ M 提交决定后，再发给 A1：“重新查询我的 Claim；若允许，调
 
 **第 4 步，发给 M：**
 
-> A2 的 Claim 已到。只读查看 A1、A2 的 Claim 和现有 Git 代码，确认 A1 正在开发且代码未合入主分支。给 A2 可执行建议：谁拥有库存接口与契约、A2 只改哪些文件、结账如何处理成功/失败与幂等、哪些内容必须等接口检查点。使用本轮任务的 `coordination_round` 和 `claim.revision` 提交建议与决定；不打断 A1，不声称看到了 A1 未提交的实现。
+> A2 的 Claim 已到。只读查看 A1、A2 的 Claim 和现有 Git 代码；提交建议前刷新 A1 的 Claim，检查 `worktree_snapshot` 的接口变化、行为说明和 `observed_at`。给 A2 可执行建议：谁拥有库存接口与契约、A2 只改哪些文件、结账如何处理成功/失败与幂等、哪些内容必须等接口检查点。摘要缺失或过期时说明未知，不把摘要当成可运行源码。使用本轮任务的 `coordination_round` 和 `claim.revision` 提交建议与决定；不打断 A1。
 
 **第 5 步，P2 发给 A2：**
 

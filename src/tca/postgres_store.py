@@ -70,6 +70,7 @@ class PostgresClaimStore:
                 last_heartbeat TEXT,
                 progress TEXT,
                 handoff TEXT,
+                worktree_snapshot TEXT,
                 PRIMARY KEY (project_id, claim_id)
             )""",
             """CREATE TABLE IF NOT EXISTS coordination_tasks (
@@ -108,6 +109,7 @@ class PostgresClaimStore:
                     "last_heartbeat",
                     "progress",
                     "handoff",
+                    "worktree_snapshot",
                 ):
                     cursor.execute(
                         sql.SQL(
@@ -636,6 +638,18 @@ class PostgresClaimStore:
             if cursor.rowcount != 1:
                 raise KeyError(f"{project_id}:{claim_id}")
 
+    def update_worktree_snapshot(
+        self, project_id: str, claim_id: str, snapshot: dict[str, object]
+    ) -> None:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """UPDATE claims SET worktree_snapshot = %s, updated_at = %s
+                WHERE project_id = %s AND claim_id = %s AND state = 'executing'""",
+                (json.dumps(snapshot), _now(), project_id, claim_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError(f"{project_id}:{claim_id} is no longer executing")
+
     def publish_handoff(
         self, project_id: str, claim_id: str, handoff: Handoff, ts: str
     ) -> None:
@@ -717,4 +731,5 @@ class PostgresClaimStore:
             last_heartbeat=row.get("last_heartbeat") or "",
             progress=row.get("progress") or "",
             handoff=Handoff.from_mapping(handoff) if handoff else None,
+            worktree_snapshot=json.loads(row["worktree_snapshot"]) if row.get("worktree_snapshot") else None,
         )

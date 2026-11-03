@@ -466,6 +466,60 @@ class Controller:
             record = self.store.get(project_id, claim_id)
         return record
 
+    def report_worktree_snapshot(
+        self, project_id: str, claim_id: str, snapshot: dict[str, object]
+    ) -> ClaimRecord:
+        """Keep a bounded, code-free view of an executing A's local changes."""
+        self.run_deadline_checks(project_id)
+        record = self.store.get(project_id, claim_id)
+        if record.state is not ClaimState.EXECUTING:
+            raise ValueError("worktree snapshots require an executing claim")
+        allowed = {
+            "head", "fingerprint", "changed_paths", "changed_symbols",
+            "api_changes", "outside_scope_count", "truncated", "summary",
+        }
+        if set(snapshot) - allowed:
+            raise ValueError("worktree snapshot contains unsupported fields")
+        compact: dict[str, object] = {}
+        for key, limit, width in (
+            ("changed_paths", 40, 160),
+            ("changed_symbols", 40, 160),
+            ("api_changes", 30, 200),
+        ):
+            items = snapshot.get(key, [])
+            if not isinstance(items, list) or len(items) > limit or any(
+                not isinstance(item, str) or len(item) > width for item in items
+            ):
+                raise ValueError(f"invalid {key} in worktree snapshot")
+            compact[key] = items
+        for key, length in (("head", 40), ("fingerprint", 64)):
+            value = snapshot.get(key, "")
+            if not isinstance(value, str) or len(value) != length or any(
+                char not in "0123456789abcdef" for char in value
+            ):
+                raise ValueError(f"invalid {key} in worktree snapshot")
+            compact[key] = value
+        outside = snapshot.get("outside_scope_count", 0)
+        if type(outside) is not int or outside < 0:
+            raise ValueError("invalid outside_scope_count")
+        compact["outside_scope_count"] = outside
+        truncated = snapshot.get("truncated", False)
+        if type(truncated) is not bool:
+            raise ValueError("invalid truncated flag")
+        compact["truncated"] = truncated
+        summary = snapshot.get("summary", "")
+        if not isinstance(summary, str) or len(summary) > 500:
+            raise ValueError("invalid worktree summary")
+        previous = record.worktree_snapshot or {}
+        same_content = previous.get("fingerprint") == compact["fingerprint"]
+        compact["summary"] = summary or (previous.get("summary", "") if same_content else "")
+        compact["summary_updated_at"] = (
+            self._now_iso() if summary else (previous.get("summary_updated_at", "") if same_content else "")
+        )
+        compact["observed_at"] = self._now_iso()
+        self.store.update_worktree_snapshot(project_id, claim_id, compact)
+        return self.store.get(project_id, claim_id)
+
     def request_requirements_clarification(
         self,
         project_id: str,

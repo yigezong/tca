@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 import subprocess
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,10 +15,11 @@ import yaml
 
 from .rules import paths_overlap
 from .completion import verify_local_git
+from .worktree_digest import build_worktree_digest
 
 
 DEFAULT_TOKEN_ENV = "TCA_API_TOKEN"
-REPO_REQUIRED_COMMANDS = {"submit"}
+REPO_REQUIRED_COMMANDS = {"submit", "snapshot", "watch-worktree"}
 
 
 class TcaClientError(RuntimeError):
@@ -368,6 +370,20 @@ def build_parser() -> argparse.ArgumentParser:
     progress.add_argument("claim_id")
     progress.add_argument("--note", default="", help="Optional progress note.")
 
+    snapshot = subparsers.add_parser(
+        "snapshot", help="A: publish a bounded summary of uncommitted changes."
+    )
+    snapshot.add_argument("claim_id")
+    snapshot.add_argument("--summary", default="", help="Brief semantic change summary, without code.")
+
+    worktree_watch = subparsers.add_parser(
+        "watch-worktree", help="A: continuously publish compact worktree snapshots."
+    )
+    worktree_watch.add_argument("claim_id")
+    worktree_watch.add_argument("--interval", type=float, default=5.0)
+    worktree_watch.add_argument("--max-updates", type=int, default=0,
+                                help="Stop after this many published snapshots; 0 runs until completion.")
+
     integrate = subparsers.add_parser(
         "integrate",
         help="Fallback: confirm integration when a webhook cannot prove ancestry.",
@@ -581,6 +597,57 @@ async def run(args: argparse.Namespace) -> dict[str, Any] | None:
                 "progress": args.note,
             },
         )
+    if args.command in {"snapshot", "watch-worktree"}:
+        if repo_root is None:
+            raise TcaClientError("worktree snapshots require the Claim worktree")
+        if args.command == "watch-worktree" and not 1 <= args.interval <= 60:
+            raise TcaClientError("--interval must be between 1 and 60 seconds")
+        if args.command == "watch-worktree" and args.max_updates < 0:
+            raise TcaClientError("--max-updates must be nonnegative")
+        previous: str | None = None
+        last_publish = 0.0
+        updates = 0
+        while True:
+            record = await call_tool(
+                mcp_url=mcp_url, token=token, name="get_claim_state",
+                arguments={"project_id": project_id, "claim_id": args.claim_id},
+            )
+            if not isinstance(record, Mapping) or not isinstance(record.get("claim"), Mapping):
+                raise TcaClientError("server did not return a Claim")
+            if record.get("state") != "executing":
+                if args.command == "snapshot":
+                    raise TcaClientError("worktree snapshots require an executing Claim")
+                return {"event": "stopped", "state": record.get("state"), "updates": updates}
+            try:
+                digest = build_worktree_digest(repo_root, record["claim"])
+            except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
+                raise TcaClientError(str(exc)) from exc
+            summary = args.summary if args.command == "snapshot" else ""
+            if digest["fingerprint"] != previous or summary or (
+                args.command == "watch-worktree" and time.monotonic() - last_publish >= 60
+            ):
+                if summary:
+                    digest["summary"] = summary
+                updated = await call_tool(
+                    mcp_url=mcp_url, token=token, name="report_worktree_snapshot",
+                    arguments={"project_id": project_id, "claim_id": args.claim_id,
+                               "snapshot": digest},
+                )
+                snapshot_value = updated.get("worktree_snapshot") if isinstance(updated, Mapping) else None
+                if not isinstance(snapshot_value, Mapping):
+                    raise TcaClientError("server did not retain the worktree snapshot")
+                previous = str(digest["fingerprint"])
+                last_publish = time.monotonic()
+                updates += 1
+                if args.command == "snapshot":
+                    return dict(snapshot_value)
+                print_json({"event": "snapshot", "claim_id": args.claim_id,
+                            "changed_paths": snapshot_value.get("changed_paths"),
+                            "api_changes": snapshot_value.get("api_changes"),
+                            "observed_at": snapshot_value.get("observed_at")})
+                if args.max_updates and updates >= args.max_updates:
+                    return {"event": "stopped", "updates": updates}
+            await asyncio.sleep(args.interval)
     if args.command == "integrate":
         return await call_tool(
             mcp_url=mcp_url,

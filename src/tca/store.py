@@ -114,7 +114,7 @@ class ClaimStore:
             str(row["name"])
             for row in self._connection.execute("PRAGMA table_info(claims)")
         }
-        for name in ("executing_since", "last_heartbeat", "progress", "handoff"):
+        for name in ("executing_since", "last_heartbeat", "progress", "handoff", "worktree_snapshot"):
             if name not in existing:
                 self._connection.execute(
                     f"ALTER TABLE claims ADD COLUMN {name} TEXT"
@@ -184,6 +184,7 @@ class ClaimStore:
                 last_heartbeat TEXT,
                 progress TEXT,
                 handoff TEXT,
+                worktree_snapshot TEXT,
                 PRIMARY KEY (project_id, claim_id)
             )"""
         )
@@ -667,6 +668,18 @@ class ClaimStore:
             if cursor.rowcount != 1:
                 raise KeyError(f"{project_id}:{claim_id}")
 
+    def update_worktree_snapshot(
+        self, project_id: str, claim_id: str, snapshot: dict[str, object]
+    ) -> None:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE claims SET worktree_snapshot = ?, updated_at = ?
+                WHERE project_id = ? AND claim_id = ? AND state = 'executing'""",
+                (json.dumps(snapshot), _now(), project_id, claim_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError(f"{project_id}:{claim_id} is no longer executing")
+
     def publish_handoff(
         self, project_id: str, claim_id: str, handoff: Handoff, ts: str
     ) -> None:
@@ -750,6 +763,7 @@ class ClaimStore:
             last_heartbeat=row["last_heartbeat"] or "",
             progress=row["progress"] or "",
             handoff=Handoff.from_mapping(handoff) if handoff else None,
+            worktree_snapshot=json.loads(row["worktree_snapshot"]) if row["worktree_snapshot"] else None,
         )
 
 

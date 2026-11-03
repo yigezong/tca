@@ -20,6 +20,8 @@ A: after publishing or submitting a Claim, call wait_for_decision before shared 
 A: only start when allowed_actions includes start_execution; in hosted mode
    supply Git completion evidence after checking the pushed branch locally.
 A: while executing, call report_progress to keep the claim alive and show progress;
+   publish compact worktree snapshots so M can see uncommitted API-shape changes
+   without receiving source text; give a brief semantic summary when behavior changes.
    when a successor needs an interface, publish_handoff with a commit, exported
    symbols, and behavior contracts. This does not mark the publishing claim done.
    C expires claims whose execution deadline elapses without complete_claim.
@@ -174,6 +176,17 @@ def create_mcp(controller: Controller | None = None, access: ProjectAccess | Non
         if access:
             access.require_claim_owner(project_id, claim_id)
         return controller.report_progress(project_id, claim_id, progress).to_mapping()
+
+    @mcp.tool()
+    def report_worktree_snapshot(
+        project_id: str, claim_id: str, snapshot: dict[str, object]
+    ) -> dict[str, object]:
+        """For the owning A: publish bounded change metadata, never a source diff."""
+        if access:
+            access.require_claim_owner(project_id, claim_id)
+        return controller.report_worktree_snapshot(
+            project_id, claim_id, snapshot
+        ).to_mapping()
 
     @mcp.tool()
     def request_requirements_clarification(

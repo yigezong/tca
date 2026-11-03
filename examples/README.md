@@ -42,8 +42,8 @@ P1 and P2 first log in to TCA, expose their own `TCA_TOKEN` to Codex, and open *
 | --- | --- | --- |
 | 1 | P1, **A1** chat | Submit upstream Claim; stop before editing. |
 | 2 | P1, **M** chat | Review A1, decide; then resume A1. |
-| 3 | After A1 reports local uncommitted changes, P2, **A2** chat | Submit downstream Claim from old `main`; do not edit yet. |
-| 4 | P1, **M** chat | Advise A2 using both Claims; do not pretend to see A1's uncommitted files. |
+| 3 | After A1 publishes an uncommitted worktree digest, P2, **A2** chat | Submit downstream Claim from old `main`; do not edit yet. |
+| 4 | P1, **M** chat | Check A1's latest digest and both Claims before advising A2; the digest is not source code. |
 | 5 | P2, **A2** chat | Start after approval and implement independent parts. |
 | 6 | P1, **A1** chat | Push an interface checkpoint and publish a handoff; do not merge `main`. |
 | 7 | Both A finish; creator integrates temporarily | Merge both branches in a temporary integration branch, run tests, inspect behavior. |
@@ -56,7 +56,7 @@ P1 and P2 first log in to TCA, expose their own `TCA_TOKEN` to Codex, and open *
 
 > As read-only M, lease the `stockroom-checkout` coordination task. Read the Claim and necessary baseline code, clarify A1's interface ownership and constraints, and submit advice and a decision with the current round and revision. Do not edit product code or claim to see uncommitted work.
 
-Then tell A1: “Query my Claim again. If allowed, call `start_execution`, implement inventory and tests under the agreed contract, and stop with local uncommitted changes. Report changed files; do not commit, push, or merge.” Wait for that report before Prompt 3.
+Then tell A1: “Query my Claim again. If allowed, call `start_execution`, implement inventory and tests under the agreed contract, and stop with local uncommitted changes. Do not commit, push, or merge.” Once A1 starts, run `tca-client watch-worktree CLAIM_ID --interval 5` in a **separate terminal in A1's worktree** (replace the Claim ID). When the behavior is clear, run `tca-client snapshot CLAIM_ID --summary "reserve is idempotent by order_id; failures do not deduct stock"`. Confirm that the server Claim has a `worktree_snapshot` before Prompt 3. Keep the watcher running until the Claim ends.
 
 **Prompt 3 — A2:**
 
@@ -64,7 +64,7 @@ Then tell A1: “Query my Claim again. If allowed, call `start_execution`, imple
 
 **Prompt 4 — M:**
 
-> A2 has submitted. Read A1 and A2 Claims and the available Git code. A1 is executing and its local implementation has not been merged. Give A2 actionable advice: who owns the inventory contract, what A2 may edit, how checkout handles success/failure and retries, and what must wait for an interface checkpoint. Use the leased task's `coordination_round` and `claim.revision`. Do not interrupt A1 or claim to see its uncommitted files.
+> A2 has submitted. Read A1 and A2 Claims and the available Git code. Refresh A1's Claim immediately before advising A2; inspect `worktree_snapshot` for API changes, the behavior summary, and `observed_at`. Give A2 actionable advice: who owns the inventory contract, what A2 may edit, how checkout handles success/failure and retries, and what must wait for an interface checkpoint. Treat a missing or stale digest as unknown, and do not treat it as runnable source code. Use the leased task's `coordination_round` and `claim.revision`. Do not interrupt A1.
 
 **Prompt 5 — A2:**
 

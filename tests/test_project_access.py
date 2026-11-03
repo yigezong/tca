@@ -253,6 +253,16 @@ async def test_mcp_enforces_single_developer_identity_and_owner_role(tmp_path) -
             await mcp.call_tool("submit_claim", {"claim": {**claim, "claim_id": "feature-2",
                 "author": "agent-bob", "work_branch": "feature/agent-bob/feature-2"}})
         await mcp.call_tool("start_execution", {"project_id": "org/repo", "claim_id": "feature-1"})
+        await mcp.call_tool("report_worktree_snapshot", {
+            "project_id": "org/repo", "claim_id": "feature-1",
+            "snapshot": {
+                "head": "a" * 40, "fingerprint": "b" * 64,
+                "changed_paths": ["src/example.py"],
+                "changed_symbols": ["src/example.py:build"],
+                "api_changes": [], "outside_scope_count": 0,
+                "truncated": False,
+            },
+        })
         with pytest.raises(ToolError, match="hosted completion requires"):
             await mcp.call_tool("complete_claim", {"project_id": "org/repo", "claim_id": "feature-1"})
         await mcp.call_tool("complete_claim", {"project_id": "org/repo", "claim_id": "feature-1",
@@ -265,6 +275,11 @@ async def test_mcp_enforces_single_developer_identity_and_owner_role(tmp_path) -
 
     token = current_principal.set(Principal("bob"))
     try:
+        with pytest.raises(ToolError, match="agent-bob"):
+            await mcp.call_tool("report_worktree_snapshot", {
+                "project_id": "org/repo", "claim_id": "feature-1",
+                "snapshot": {"head": "a" * 40, "fingerprint": "b" * 64},
+            })
         with pytest.raises(ToolError, match="agent-bob"):
             await mcp.call_tool("start_execution", {"project_id": "org/repo",
                 "claim_id": "feature-1"})

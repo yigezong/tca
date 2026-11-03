@@ -93,6 +93,10 @@ class Store(Protocol):
         self, project_id: str, claim_id: str, progress: str, ts: str
     ) -> None: ...
 
+    def update_worktree_snapshot(
+        self, project_id: str, claim_id: str, snapshot: dict[str, object]
+    ) -> None: ...
+
     def publish_handoff(
         self, project_id: str, claim_id: str, handoff: Handoff, ts: str
     ) -> None: ...
