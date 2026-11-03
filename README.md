@@ -79,6 +79,9 @@ The starter project is [`examples/stockroom-starter`](examples/stockroom-starter
 
 **Prepare before the presentation.** From the TCA repository root, create a separate private business repository (replace the GitHub login and choose an unused repository name):
 
+The `gh` commands use GitHub CLI; run `gh auth login` first if needed. This GitHub credential is separate from your TCA session.
+If a demo repository already contains this starter, skip the copy, `git init`, and `gh repo create` steps and configure the M checkout directly.
+
 ```bash
 mkdir -p ../stockroom-live
 rsync -a --exclude=.venv --exclude=__pycache__ examples/stockroom-starter/ ../stockroom-live/
@@ -94,12 +97,12 @@ Grant the second developer repository write access and install the TCA GitHub Ap
 
 ```bash
 # First person's computer, from the parent directory of the M checkout
-git clone git@github.com:YOUR_GITHUB_LOGIN/tca-stockroom-live.git stockroom-a1
+gh repo clone YOUR_GITHUB_LOGIN/tca-stockroom-live stockroom-a1
 tca-codex join --role a --repo ./stockroom-a1 --server-url https://YOUR_TCA_HOST/mcp
 tca-codex doctor --repo ./stockroom-a1
 
 # Second person's computer
-git clone git@github.com:YOUR_GITHUB_LOGIN/tca-stockroom-live.git stockroom-a2
+gh repo clone YOUR_GITHUB_LOGIN/tca-stockroom-live stockroom-a2
 tca-codex join --repo ./stockroom-a2 --server-url https://YOUR_TCA_HOST/mcp
 tca-codex doctor --repo ./stockroom-a2
 ```

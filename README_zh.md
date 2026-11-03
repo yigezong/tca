@@ -80,6 +80,9 @@ export TCA_TOKEN="$(tca-codex token --server-url https://YOUR_TCA_HOST/mcp)"
 
 **演示前准备：**在 TCA 仓库根目录执行下列命令。把 `YOUR_GITHUB_LOGIN` 换成自己的账号，并为仓库取一个未使用过的名字：
 
+这里的 `gh` 是 GitHub CLI；首次使用先运行 `gh auth login`。这个登录用于创建、克隆和推送 GitHub 仓库，和 TCA 专用会话是两套凭证。
+如果演示 repo 已经创建并含有这份起步代码，跳过下面的复制、`git init` 和 `gh repo create`，直接从配置 M 工作树开始。
+
 ```bash
 mkdir -p ../stockroom-live
 rsync -a --exclude=.venv --exclude=__pycache__ examples/stockroom-starter/ ../stockroom-live/
@@ -95,12 +98,12 @@ uv run python -m unittest discover -s tests
 
 ```bash
 # 你的电脑：从 M clone 所在目录的上一级执行
-git clone git@github.com:YOUR_GITHUB_LOGIN/tca-stockroom-live.git stockroom-a1
+gh repo clone YOUR_GITHUB_LOGIN/tca-stockroom-live stockroom-a1
 tca-codex join --role a --repo ./stockroom-a1 --server-url https://YOUR_TCA_HOST/mcp
 tca-codex doctor --repo ./stockroom-a1
 
 # 导师电脑：在自己的工作目录执行
-git clone git@github.com:YOUR_GITHUB_LOGIN/tca-stockroom-live.git stockroom-a2
+gh repo clone YOUR_GITHUB_LOGIN/tca-stockroom-live stockroom-a2
 tca-codex join --repo ./stockroom-a2 --server-url https://YOUR_TCA_HOST/mcp
 tca-codex doctor --repo ./stockroom-a2
 ```
