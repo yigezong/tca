@@ -6,7 +6,6 @@ import argparse
 import asyncio
 import base64
 import hashlib
-import io
 import json
 import os
 import re
@@ -113,7 +112,7 @@ async def _probe_stdio(transport: dict) -> None:
     params = StdioServerParameters(
         command=transport["command"], args=transport.get("args") or [],
     )
-    async with stdio_client(params, errlog=io.StringIO()) as (read, write):
+    async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
             names = {tool.name for tool in (await session.list_tools()).tools}
