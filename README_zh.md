@@ -1,6 +1,6 @@
 # TCA：在代码尚未合并时协调多人开发
 
-[English](README.md) · [演示视频](docs/assets/tca-process-demo.mp4)
+[English](README.md)
 
 ## 为什么需要它
 

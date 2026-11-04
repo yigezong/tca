@@ -1,6 +1,6 @@
 # TCA: coordinate developers before their code is merged
 
-[中文说明](README_zh.md) · [Demo video](docs/assets/tca-process-demo.mp4)
+[中文说明](README_zh.md)
 
 ## The problem
 
