@@ -401,7 +401,7 @@ def login_command(args: argparse.Namespace) -> None:
     path = _session_path(args.server_url)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     path.parent.chmod(0o700)
-    _write_secret(path, json.dumps(response).encode())
+    _write_secret(path, json.dumps({**response, "key_path": str(key_path)}).encode())
     print(f"TCA login complete for {response['login']}; session expires at {response['expires_at']}.")
     print(f"To expose the TCA-only session to Codex: export TCA_TOKEN=\"$(tca-codex token --server-url {args.server_url})\"")
 
@@ -479,6 +479,27 @@ def project_command(args: argparse.Namespace) -> None:
     ))
     print(f"Joined {project_id} as {result['role'].upper()} ({agent_id}).")
     print(f"Codex must have {args.token_env} in its environment when it starts.")
+    if agent_id == "agent-m":
+        from .manager_service import start
+        start(repo)
+        print("M is running in the background; check it with 'tca-codex manager status --repo PATH'.")
+
+
+def manager_command(args: argparse.Namespace) -> None:
+    from .manager_service import paths, running, start, stop
+    repo = git_root(args.repo)
+    identity = repo / ".tca" / "agent-id"
+    if not identity.exists() or identity.read_text().strip() != "agent-m":
+        raise SetupError("manager commands require an agent-m worktree")
+    if args.action == "start":
+        start(repo)
+    elif args.action == "stop":
+        stop(repo)
+    elif args.action == "status":
+        log_path = paths(repo)[1]
+        print(f"M {'running' if running(repo) else 'stopped'} for {repo}; log: {log_path}")
+        return
+    print(f"M {args.action} complete for {repo}.")
 
 
 def main() -> None:
@@ -501,6 +522,9 @@ def main() -> None:
     login.add_argument("--key-path", type=Path, default=tca_home() / "identity")
     session = sub.add_parser("token", help="print the local TCA-only session token")
     session.add_argument("--server-url", required=True)
+    manager = sub.add_parser("manager", help="control the resident M process")
+    manager.add_argument("action", choices=("start", "status", "stop"))
+    manager.add_argument("--repo", type=Path, default=Path.cwd())
     for name in ("start", "join", "projects", "delegate-m"):
         command = sub.add_parser(name, help=f"GitHub project {name}")
         if name != "projects":
@@ -525,10 +549,17 @@ def main() -> None:
         if args.command == "token":
             print(_tca_token(args.server_url, "TCA_TOKEN"))
             return
+        if args.command == "manager":
+            manager_command(args)
+            return
         if args.command in {"start", "join", "projects", "delegate-m"}:
             project_command(args)
             return
         result = setup(args) if args.command == "init" else doctor(args)
+        if args.command == "init" and args.agent_id == "agent-m" and args.mode == "local":
+            from .manager_service import start
+            start(git_root(args.repo))
+            print("M is running in the background; check it with 'tca-codex manager status --repo PATH'.")
     except SetupError as exc:
         parser.exit(2, f"tca-codex: {exc}\n")
     if result:

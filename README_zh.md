@@ -87,13 +87,15 @@ export TCA_TOKEN="$(tca-codex token --server-url https://YOUR_TCA_HOST/mcp)"
 
 不要把 `TCA_TOKEN`、GitHub token 或私钥放进聊天、仓库和截图。Codex 桌面版若不继承终端变量，应在其启动环境配置 `TCA_TOKEN` 后开启新任务。两人实验须在在线 C 部署包含“项目创建者同时可作 M 和 A”功能的版本，并在两台电脑更新 CLI。
 
-项目创建者先在 M 工作树运行 `tca-codex start --repo PATH --server-url https://YOUR_TCA_HOST/mcp`，将生成的 `AGENTS.md`、`.agents/skills/`、`.tca/project.yaml`、`.gitignore` 提交推送；`.tca/agent-id` 只留本地。随后本人在另一工作树运行 `tca-codex join --role a --repo PATH --server-url https://YOUR_TCA_HOST/mcp`；另一位开发者运行 `tca-codex join --repo PATH --server-url https://YOUR_TCA_HOST/mcp`。各工作树运行 `tca-codex doctor --repo PATH`。A 工作树生成的 `.codex/hooks.json` 仅留本机，首次打开 Codex 时在设置中的 Hooks 审核并信任它；未经信任就不会采集。M 也可由创建者用 `tca-codex delegate-m` 委派给其他有读取权限的成员。
+项目创建者先在 M 工作树运行 `tca-codex start --repo PATH --server-url https://YOUR_TCA_HOST/mcp`。在 macOS 上这会自动注册并启动一个用户级常驻 M：它轮询 C 的任务队列，有任务时才调用只读 Codex 分析，再把建议和决定送回 C；关掉启动它的终端不影响运行。电脑休眠、关机或离线时 M 暂停，C 会保留待协调任务。运行 `tca-codex manager status --repo PATH` 查看状态和日志，`tca-codex manager stop --repo PATH` 停止，`tca-codex manager start --repo PATH` 重启。会话临近过期时，M 使用本机 SSH 私钥重新登录；私钥和 GitHub token 不会发送给 C。仅用 `--project-id` 创建项目而没有 M 工作树时，须在工作树执行 `tca-codex join --role m --repo PATH --server-url ...` 才能启动常驻 M。
+
+将生成的 `AGENTS.md`、`.agents/skills/`、`.tca/project.yaml`、`.gitignore` 提交推送；`.tca/agent-id` 只留本地。随后本人在另一工作树运行 `tca-codex join --role a --repo PATH --server-url https://YOUR_TCA_HOST/mcp`；另一位开发者运行 `tca-codex join --repo PATH --server-url https://YOUR_TCA_HOST/mcp`。各工作树运行 `tca-codex doctor --repo PATH`。A 工作树生成的 `.codex/hooks.json` 仅留本机，首次打开 Codex 时在设置中的 Hooks 审核并信任它；未经信任就不会采集。M 也可由创建者用 `tca-codex delegate-m` 委派给其他有读取权限的成员；原 M 应在自己的电脑上停止旧进程，新 M 在自己的工作树执行 `tca-codex join --role m`。
 
 已接入旧版本的 A 工作树，更新 CLI 和线上 C 后重新运行 `tca-codex join --repo PATH --server-url https://YOUR_TCA_HOST/mcp --replace-local-config`，再审核新 hook。
 
 ### C 不部署云端
 
-- **同一电脑试用：**从 TCA 源码目录运行 `sh scripts/install-codex.sh /absolute/path/to/repo`。本机 `tca_local` 与 SQLite 协调同机工作树；它不隔离不同人的身份，也不能让两台电脑共享状态。
+- **同一电脑试用：**从 TCA 源码目录运行 `sh scripts/install-codex.sh /absolute/path/to/repo`。本机 `tca_local` 与 SQLite 协调同机工作树；在 M 工作树执行 `tca-codex init --agent-id agent-m --repo PATH` 也会启动常驻 M。它不隔离不同人的身份，也不能让两台电脑共享状态。
 - **两台电脑、C 放在其中一台：**C 仍须作为双方可访问的服务运行，配共享数据库、HTTPS 地址和相同的身份校验；可用受控内网或隧道提供 HTTPS。只在一台电脑启动 `tca_local`，另一台无法参加同一个实验。
 
 实践案例与双电脑操作顺序见 [examples/README_zh.md](examples/README_zh.md)。

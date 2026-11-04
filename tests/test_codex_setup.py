@@ -212,6 +212,7 @@ def test_cli_login_keeps_key_local_and_writes_tca_only_session(tmp_path: Path, m
     assert path.parent.stat().st_mode & 0o777 == 0o700
     assert path.stat().st_mode & 0o777 == 0o600
     assert json.loads(path.read_text())["token"] == "tca_scoped-session"
+    assert json.loads(path.read_text())["key_path"] == str(tmp_path / ".tca" / "identity")
 
 
 def test_tca_home_can_isolate_client_keys_sessions_and_local_db(tmp_path: Path, monkeypatch) -> None:
@@ -251,6 +252,25 @@ def test_owner_can_start_by_repo_id_before_clone(monkeypatch, capsys) -> None:
     ))
     assert calls == [("/api/projects", {"project_id": "owner/repo"})]
     assert "Started owner/repo as M" in capsys.readouterr().out
+
+
+def test_owner_start_in_checkout_launches_resident_m(tmp_path: Path, monkeypatch) -> None:
+    repo = make_repo(tmp_path / "project")
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin",
+                    "git@github.com:owner/repo.git"], check=True)
+    started = []
+    monkeypatch.setattr("tca.codex_setup._tca_token", lambda *_: "tca_test-token")
+    monkeypatch.setattr("tca.codex_setup._project_api", lambda *_args, **_kwargs: {
+        "project_id": "owner/repo", "role": "m", "agent_id": "agent-m",
+    })
+    monkeypatch.setattr("tca.codex_setup.setup", lambda _args: None)
+    monkeypatch.setattr("tca.manager_service.start", lambda path: started.append(path))
+    project_command(argparse.Namespace(
+        command="start", repo=repo, project_id=None,
+        server_url="https://tca.example.com/mcp", token_env="TCA_TOKEN",
+        replace_mcp=False,
+    ))
+    assert started == [repo.resolve()]
 
 
 @pytest.mark.anyio
