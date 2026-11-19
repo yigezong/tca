@@ -21,6 +21,8 @@ tca-app = "tca.app:main"
 tca-client = "tca.client_cli:main"
 tca-mcp-stdio = "tca.local_mcp:main"
 tca-codex = "tca.codex_setup:main"
+tca-agent = "tca.codex_setup:main"
+tca-capture = "tca.capture_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

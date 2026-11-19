@@ -1,4 +1,4 @@
-"""Codex Stop hook: inspect the local worktree without involving the coding agent."""
+"""Inspect a developer's local worktree at an agent turn boundary."""
 
 from __future__ import annotations
 
@@ -24,8 +24,14 @@ def capture_turn(payload: dict[str, object]) -> dict[str, object] | None:
     cwd = payload.get("cwd")
     if not isinstance(cwd, str):
         return None
+    turn_id = payload.get("turn_id")
+    return capture_worktree(Path(cwd), turn_id if isinstance(turn_id, str) else "")
+
+
+def capture_worktree(path: Path, turn_id: str = "") -> dict[str, object] | None:
+    """Shared capture path for Codex, OpenCode, Pi, and DSH adapters."""
     try:
-        repo = git_root(Path(cwd))
+        repo = git_root(path)
     except SetupError:
         return None
     project_file = repo / ".tca" / "project.yaml"
@@ -64,8 +70,7 @@ def capture_turn(payload: dict[str, object]) -> dict[str, object] | None:
         if not isinstance(claim, dict) or found.get("state") != "executing":
             return None
         digest = build_worktree_digest(repo, claim)
-        turn_id = payload.get("turn_id")
-        digest["turn_id"] = turn_id if isinstance(turn_id, str) else ""
+        digest["turn_id"] = turn_id
         return _project_api(
             mcp_url, token,
             path + "/claims/" + urllib.parse.quote(str(claim["claim_id"]), safe="")
@@ -87,8 +92,7 @@ def capture_turn(payload: dict[str, object]) -> dict[str, object] | None:
                 raise ValueError("more than one executing Claim uses this branch")
             record = matches[0]
             digest = build_worktree_digest(repo, record.claim.to_mapping())
-            turn_id = payload.get("turn_id")
-            digest["turn_id"] = turn_id if isinstance(turn_id, str) else ""
+            digest["turn_id"] = turn_id
             result = Controller(store, BasicRuleChecker()).report_worktree_snapshot(
                 project_id, record.claim.claim_id, digest
             )

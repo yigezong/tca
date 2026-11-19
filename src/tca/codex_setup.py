@@ -1,4 +1,4 @@
-"""Connect a Git repository to TCA through the user's existing Codex CLI."""
+"""Connect a Git repository to TCA through a coding-agent client."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ END = "<!-- tca-codex:end -->"
 AGENT_NOTE = f"""{START}
 This repository uses TCA for parallel coding. Before changing shared code, read
 `.agents/skills/tca-coordination/SKILL.md` and `.tca/project.yaml`. The local
-worktree identity is in `.tca/agent-id`. Keep working in the normal Codex UI.
+worktree identity is in `.tca/agent-id`. Keep working in your normal coding-agent UI.
 {END}
 """
 
@@ -80,6 +80,18 @@ def tca_home() -> Path:
 
 def skill_text() -> str:
     return files("tca").joinpath("assets", "tca-skill.md").read_text(encoding="utf-8")
+
+
+def legacy_skill_text() -> str:
+    """The exact generated Codex skill from before multi-client support."""
+    return (skill_text()
+            .replace("# TCA in coding agents", "# TCA in Codex")
+            .replace("your coding agent's normal chat", "Codex's normal chat")
+            .replace("A trusted local turn-end adapter", "A trusted local Codex Stop hook")
+            .replace("The adapter cannot infer", "The hook cannot infer")
+            .replace("its latest completed agent turn", "its latest completed Codex turn")
+            .replace("The resident M worker uses Codex and polls C for new tasks.",
+                     "If there is no task, tell the user and wait for the next request; a Codex chat is not an always-on daemon."))
 
 
 def desired_transport(mode: str, server_url: str, token_env: str) -> dict:
@@ -146,17 +158,25 @@ def ensure_agent_note(repo: Path) -> None:
     path = repo / "AGENTS.md"
     existing = path.read_text(encoding="utf-8") if path.exists() else ""
     if START in existing:
-        if AGENT_NOTE.strip() not in existing:
+        legacy = AGENT_NOTE.replace("your normal coding-agent UI", "the normal Codex UI")
+        if AGENT_NOTE.strip() not in existing and legacy.strip() not in existing:
             raise SetupError(f"Existing TCA block in {path} differs; inspect it before setup")
+        if legacy.strip() in existing:
+            path.write_text(existing.replace(legacy.strip(), AGENT_NOTE.strip()), encoding="utf-8")
         return
     path.write_text(existing.rstrip() + ("\n\n" if existing.strip() else "") + AGENT_NOTE,
                     encoding="utf-8")
 
 
-def ensure_ignore(repo: Path) -> None:
+def ensure_ignore(repo: Path, client: str = "codex") -> None:
     path = repo / ".gitignore"
     existing = path.read_text(encoding="utf-8") if path.exists() else ""
-    missing = [entry for entry in (".tca/agent-id", ".codex/hooks.json")
+    entries = [".tca/agent-id", ".codex/hooks.json"]
+    entries += {"pi": [".pi/mcp.json", ".pi/extensions/tca.ts"],
+                "opencode": [".opencode/opencode.json", ".opencode/plugins/tca/",
+                             ".opencode/plugin/tca.ts"],
+                "dsh": [".tca/dsh.patch.yml", ".tca/dsh-hooks.json"]}.get(client, [])
+    missing = [entry for entry in entries
                if entry not in existing.splitlines()]
     if missing:
         path.write_text(existing.rstrip() + ("\n" if existing.strip() else "")
@@ -192,8 +212,13 @@ def ensure_turn_hook(repo: Path) -> None:
 
 
 def setup(args: argparse.Namespace) -> None:
-    if not shutil.which("codex"):
+    client = getattr(args, "client", "codex")
+    if args.agent_id == "agent-m" and client != "codex":
+        raise SetupError("The resident M worker currently requires Codex; choose --client codex for M")
+    if client == "codex" and not shutil.which("codex"):
         raise SetupError("Codex CLI is not on PATH; install/open Codex CLI first")
+    if client != "codex" and not shutil.which(client):
+        raise SetupError(f"{client} CLI is not on PATH")
     repo = git_root(args.repo)
     if not re.fullmatch(r"agent-[A-Za-z0-9_-]+", args.agent_id):
         raise SetupError("agent ID must look like agent-a1 or agent-m")
@@ -230,9 +255,11 @@ def setup(args: argparse.Namespace) -> None:
         )
     )
     overwrite_paths = {project_path, identity_path} if migrating_config else set()
-    if migrating_config and skill_path.exists():
+    if skill_path.exists():
         existing_skill = skill_path.read_text(encoding="utf-8")
-        if existing_skill.startswith("---\nname: tca-coordination\n") and "# TCA in Codex" in existing_skill:
+        if existing_skill == legacy_skill_text() or (migrating_config
+                and existing_skill.startswith("---\nname: tca-coordination\n")
+                and "# TCA in Codex" in existing_skill):
             overwrite_paths.add(skill_path)
     for path, content in ((project_path, project_text), (skill_path, skill_text()),
                           (identity_path, args.agent_id + "\n")):
@@ -240,9 +267,12 @@ def setup(args: argparse.Namespace) -> None:
             raise SetupError(f"Refusing to overwrite {path}; inspect it before setup")
     agent_path = repo / "AGENTS.md"
     if agent_path.exists() and START in agent_path.read_text(encoding="utf-8"):
-        if AGENT_NOTE.strip() not in agent_path.read_text(encoding="utf-8"):
+        old_note = AGENT_NOTE.replace("your normal coding-agent UI", "the normal Codex UI")
+        if not any(note.strip() in agent_path.read_text(encoding="utf-8")
+                   for note in (AGENT_NOTE, old_note)):
             raise SetupError(f"Existing TCA block in {agent_path} differs; inspect it before setup")
-    ensure_mcp(mcp_name, desired, args.replace_mcp)
+    if client == "codex":
+        ensure_mcp(mcp_name, desired, args.replace_mcp)
     if project_path in overwrite_paths:
         project_path.write_text(project_text, encoding="utf-8")
     else:
@@ -256,21 +286,26 @@ def setup(args: argparse.Namespace) -> None:
     else:
         ensure_file(identity_path, args.agent_id + "\n")
     ensure_agent_note(repo)
-    ensure_ignore(repo)
+    ensure_ignore(repo, client)
     if args.agent_id != "agent-m":
-        ensure_turn_hook(repo)
-    print(f"TCA is connected to Codex for {repo} ({project_id}, {args.mode}).")
-    print("Use Codex normally in this repository. Commit AGENTS.md, .agents/skills, .tca/project.yaml and .gitignore.")
+        if client == "codex":
+            ensure_turn_hook(repo)
+        else:
+            from .agent_adapters import install_adapter
+            install_adapter(client, repo, mcp_name, desired)
+    print(f"TCA is connected to {client} for {repo} ({project_id}, {args.mode}).")
+    print("Commit AGENTS.md, .agents/skills, .tca/project.yaml and .gitignore.")
     if args.mode == "remote":
-        print(f"Make {args.token_env} available to Codex before opening it; do not commit the token.")
+        print(f"Make {args.token_env} available to {client} before opening it; do not commit the token.")
 
 
 def doctor(args: argparse.Namespace) -> int:
     repo = git_root(args.repo)
+    client = getattr(args, "client", "codex")
     issues: list[str] = []
-    if not shutil.which("codex"):
-        issues.append("Codex CLI is not on PATH")
-    else:
+    if not shutil.which(client):
+        issues.append(f"{client} CLI is not on PATH")
+    elif client == "codex":
         login = run("codex", "login", "status", check=False)
         if login.returncode:
             issues.append("Codex is not signed in; run 'codex login'")
@@ -292,15 +327,49 @@ def doctor(args: argparse.Namespace) -> int:
     else:
         identity = (repo / ".tca" / "agent-id").read_text().strip()
     if identity and identity != "agent-m":
-        hook_path = repo / ".codex" / "hooks.json"
-        if not hook_path.is_file() or "tca.turn_hook" not in hook_path.read_text():
-            issues.append("missing Codex Stop hook; rerun tca-codex join (or init)")
+        hook_paths = {"codex": repo / ".codex" / "hooks.json",
+                      "opencode": (repo / ".opencode" / "plugins" / "tca" / "index.ts"
+                                   if (repo / ".opencode" / "plugins" / "tca" / "index.ts").exists()
+                                   else repo / ".opencode" / "plugin" / "tca.ts"),
+                      "pi": repo / ".pi" / "extensions" / "tca.ts",
+                      "dsh": repo / ".tca" / "dsh-hooks.json"}
+        hook_path = hook_paths[client]
+        if not hook_path.is_file() or (client == "codex" and "tca.turn_hook" not in hook_path.read_text()):
+            issues.append(f"missing {client} turn capture; rerun tca-agent join (or init)")
     if not (repo / ".agents" / "skills" / "tca-coordination" / "SKILL.md").exists():
         issues.append("missing TCA skill")
     mcp_name = config.get("mcp", {}).get("server", "") if isinstance(config, dict) else ""
-    current = current_transport(mcp_name) if shutil.which("codex") and mcp_name else None
-    if current is None:
+    current = current_transport(mcp_name) if client == "codex" and shutil.which("codex") and mcp_name else None
+    if client == "codex" and current is None:
         issues.append(f"Codex has no '{mcp_name or 'tca'}' MCP server")
+    elif client != "codex":
+        adapter_paths = {"opencode": repo / ".opencode" / "opencode.json",
+                         "pi": repo / ".pi" / "mcp.json",
+                         "dsh": repo / ".tca" / "dsh.patch.yml"}
+        adapter_path = adapter_paths[client]
+        if not adapter_path.is_file() or mcp_name not in adapter_path.read_text():
+            issues.append(f"missing {client} MCP configuration for '{mcp_name}'")
+        elif client in {"pi", "opencode"} and shutil.which(client):
+            listed = subprocess.run([client, "mcp", "list"], cwd=repo, text=True,
+                                    capture_output=True, check=False, timeout=30)
+            if listed.returncode or mcp_name not in listed.stdout or "connected" not in listed.stdout:
+                issues.append(f"{client} MCP is not connected; check project trust, token, and client MCP list")
+        elif client == "dsh" and shutil.which("dsh"):
+            listed = subprocess.run(["dsh", "--profile", "headless", "--dump-config",
+                                     "--patch", str(adapter_path)], cwd=repo, text=True,
+                                    capture_output=True, check=False, timeout=30)
+            if listed.returncode or "mcp-" + mcp_name not in listed.stdout or "tca-turn-hook" not in listed.stdout:
+                issues.append("dsh profile did not load the TCA patch")
+        if mode == "local":
+            try:
+                asyncio.run(_probe_stdio(desired_transport("local", "", "TCA_TOKEN")))
+            except Exception as exc:
+                issues.append(f"local TCA MCP did not start: {exc}")
+        elif mode == "remote":
+            try:
+                _tca_token(config["mcp"]["url"], config["mcp"].get("token_env", "TCA_TOKEN"))
+            except (SetupError, KeyError) as exc:
+                issues.append(f"TCA session unavailable: {exc}")
     elif mode == "local":
         if current.get("type") != "stdio":
             issues.append("project is local but Codex TCA MCP is not stdio")
@@ -333,10 +402,11 @@ def doctor(args: argparse.Namespace) -> int:
     for issue in issues:
         print("FAIL:", issue)
     if not issues:
-        print(f"OK: Codex login, TCA MCP, skill, project, and identity for {repo}")
+        print(f"OK: {client} TCA MCP, turn capture, skill, project, and identity for {repo}")
         if mode == "remote":
-            print("Remote project access verified." if config.get("mcp", {}).get("token_env") == "TCA_TOKEN"
-                  else "Remote connectivity and token validity were not tested.")
+            print("Remote project access verified." if client == "codex" and
+                  config.get("mcp", {}).get("token_env") == "TCA_TOKEN"
+                  else "Remote project access was not tested by doctor.")
     return bool(issues)
 
 
@@ -434,6 +504,9 @@ def _project_api(server_url: str, token: str, path: str,
 
 
 def project_command(args: argparse.Namespace) -> None:
+    if getattr(args, "client", "codex") != "codex" and (args.command == "start"
+            or (args.command == "join" and getattr(args, "role", None) == "m")):
+        raise SetupError("The resident M worker currently requires Codex; choose --client codex for M")
     token = _tca_token(args.server_url, args.token_env)
     if args.command == "projects":
         result = _project_api(args.server_url, token, "/api/projects")
@@ -476,9 +549,10 @@ def project_command(args: argparse.Namespace) -> None:
         server_url=args.server_url, token_env=args.token_env,
         replace_mcp=args.replace_mcp,
         replace_local_config=getattr(args, "replace_local_config", False),
+        client=getattr(args, "client", "codex"),
     ))
     print(f"Joined {project_id} as {result['role'].upper()} ({agent_id}).")
-    print(f"Codex must have {args.token_env} in its environment when it starts.")
+    print(f"{getattr(args, 'client', 'codex')} must have {args.token_env} in its environment when it starts.")
     if agent_id == "agent-m":
         from .manager_service import start
         start(repo)
@@ -503,9 +577,9 @@ def manager_command(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Use TCA inside your existing Codex")
+    parser = argparse.ArgumentParser(description="Use TCA inside your coding agent")
     sub = parser.add_subparsers(dest="command", required=True)
-    init = sub.add_parser("init", help="connect this Git repo to Codex and TCA")
+    init = sub.add_parser("init", help="connect this Git repo to a coding agent and TCA")
     init.add_argument("--repo", type=Path, default=Path.cwd())
     init.add_argument("--agent-id", default="agent-a1")
     init.add_argument("--project-id")
@@ -514,8 +588,10 @@ def main() -> None:
     init.add_argument("--token-env", default="TCA_TOKEN")
     init.add_argument("--replace-mcp", action="store_true")
     init.add_argument("--replace-local-config", action="store_true")
+    init.add_argument("--client", choices=("codex", "opencode", "pi", "dsh"), default="codex")
     check = sub.add_parser("doctor", help="check Codex and TCA setup")
     check.add_argument("--repo", type=Path, default=Path.cwd())
+    check.add_argument("--client", choices=("codex", "opencode", "pi", "dsh"), default="codex")
     login = sub.add_parser("login", help="sign a challenge with a GitHub-listed SSH key")
     login.add_argument("--server-url", required=True)
     login.add_argument("--login", required=True)
@@ -532,6 +608,7 @@ def main() -> None:
                                  default=Path.cwd() if name == "join" else None)
             command.add_argument("--replace-mcp", action="store_true")
             command.add_argument("--replace-local-config", action="store_true")
+            command.add_argument("--client", choices=("codex", "opencode", "pi", "dsh"), default="codex")
             if name == "join":
                 command.add_argument("--role", choices=("a", "m"),
                                      help="choose A or M when the account has both permissions")

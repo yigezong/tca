@@ -8,7 +8,7 @@
 
 TCA 让开发者**先披露意图，再修改共享代码**。上游即使暂时没有可见代码，也要把预计修改范围、接口和不确定点写成 Claim；协调者据此约定责任。下游需要精确代码时，上游可先在自己的分支提交稳定的**接口检查点**，无需等整个功能完成或合并主分支。
 
-**边界：**TCA 不读取另一台电脑上尚未 commit 的源码。A 工作树的本机 hook 在每轮 Codex 对话结束时，自动上报带时间戳的**工作树摘要**：声明范围内的文件增删、Python 函数/方法和接口签名变化。M 可以据此发现变化中的接口，但摘要不能代替真实实现，也不能说明完整行为。Claim 解决“计划做什么”，工作树摘要解决“上一轮结束时改动到哪里”，分支上的接口检查点解决“拿到可运行的具体代码”。
+**边界：**TCA 不读取另一台电脑上尚未 commit 的源码。A 工作树的本机适配器在每轮 Agent 对话结束时，自动上报带时间戳的**工作树摘要**：声明范围内的文件增删、Python 函数/方法和接口签名变化。M 可以据此发现变化中的接口，但摘要不能代替真实实现，也不能说明完整行为。Claim 解决“计划做什么”，工作树摘要解决“上一轮结束时改动到哪里”，分支上的接口检查点解决“拿到可运行的具体代码”。
 
 ## 角色与 harness
 
@@ -16,7 +16,7 @@ TCA 让开发者**先披露意图，再修改共享代码**。上游即使暂时
 
 | 角色 | 职责 |
 | --- | --- |
-| **A：开发者** | 提交 Claim，获准后用自己的 Codex 和 Git 分支写代码；一台电脑最多一个会提交代码的 A。 |
+| **A：开发者** | 提交 Claim，获准后用自己的 Codex、OpenCode、Pi 或 dsh 和 Git 分支写代码；一台电脑最多一个会提交代码的 A。 |
 | **M：协调者** | 只读 Claim、已提交代码和 A 上报的未提交改动摘要，为各 A 明确责任、接口、依赖和验收建议；不提交业务代码，也拿不到未提交源码。 |
 | **C：控制器** | 保存权威状态，检查规则和权限，处理 M 的决定，拒绝过期协调结果；不代替代码审查和 Git 合并。 |
 | **项目创建者** | 用有仓库管理权限的账号启动项目、委派 M、核验最终集成；不必亲自担任 M。 |
@@ -29,7 +29,7 @@ flowchart TD
     C -->|需要协调| M["M：读取 Claim、已提交代码和最新工作树摘要"]
     M -->|建议与决定| C
     C -->|获准并调用 start_execution| D["A：在自己的 Git 分支开发"]
-    D -->|每轮结束：本机 Stop hook 采集紧凑摘要| C
+    D -->|每轮结束：本机适配器采集紧凑摘要| C
     C -->|等待依赖或需求澄清| W["暂缓开工"]
     D -->|可选：commit/push 稳定接口| H["Git：接口检查点，尚未合并"]
     H -->|publish_handoff，重新评估依赖| C
@@ -47,7 +47,7 @@ flowchart TD
 
 1. A 提交 **Claim**：目标、预计路径与符号、行为契约、依赖、Git 基线及工作分支。Claim 通过 TCA MCP 直接发送，不需要 Claim 分支或 webhook。
 2. C 检查已声明边界。需要协调时，M 领取任务，分别向有关 A 提建议并提交决定。A 查询 `wait_for_decision` 或 `get_claim_state`；只有 `allowed_actions` 包含 `start_execution`，才能调用它开始修改共享代码。
-3. A 在自己的分支开发，可报告进度。接入时 `tca-codex` 在 A 的工作树安装本机 Codex `Stop` hook；用户须在 Codex 中信任该 hook。此后每轮结束，hook 自动从 Git 工作树提取文件增删、Python 函数与接口签名变化，把有限元数据发给 C；A 无须启动监测命令，也没有快照 MCP 工具。M 读取最近快照及时间戳；没有快照或快照已过期时，不能推断代码未变。静态摘要不能确定行为语义。需要让下游使用真实接口时，先 commit/push 接口检查点，再用 `publish_handoff` 声明 SHA、导出符号和行为契约；这不表示整个上游功能已完成。
+3. A 在自己的分支开发，可报告进度。接入时 `tca-agent` 在 A 的工作树安装本机轮次结束适配器：Codex `Stop`、OpenCode 完成事件（V1 的 `session.idle`、V2 的 `session.execution.succeeded`）、Pi `agent_settled` 或 dsh `Stop`。客户端要求信任项目配置时，用户须先检查再确认。此后每轮结束，适配器自动从 Git 工作树提取文件增删、Python 函数与接口签名变化，把有限元数据发给 C；A 无须启动监测命令，也没有快照 MCP 工具。M 读取最近快照及时间戳；没有快照或快照已过期时，不能推断代码未变。静态摘要不能确定行为语义。需要让下游使用真实接口时，先 commit/push 接口检查点，再用 `publish_handoff` 声明 SHA、导出符号和行为契约；这不表示整个上游功能已完成。
 4. A 完成后提交并 push，远程模式在工作树运行 `tca-client complete CLAIM_ID`。客户端核查分支、基线、远程提交、改动路径，以及已声明的 Python 顶层函数和类方法；服务端 Metadata-only GitHub App 无法独立读取私有仓库 diff，因此仍须审阅代码与 A 的报告。团队照常合并，项目创建者核验后确认 `integrated`。
 
 | 状态 | 含义 |
@@ -89,7 +89,26 @@ export TCA_TOKEN="$(tca-codex token --server-url https://YOUR_TCA_HOST/mcp)"
 
 项目创建者先在 M 工作树运行 `tca-codex start --repo PATH --server-url https://YOUR_TCA_HOST/mcp`。在 macOS 上这会自动注册并启动一个用户级常驻 M：它轮询 C 的任务队列，有任务时才调用只读 Codex 分析，再把建议和决定送回 C；关掉启动它的终端不影响运行。电脑休眠、关机或离线时 M 暂停，C 会保留待协调任务。运行 `tca-codex manager status --repo PATH` 查看状态和日志，`tca-codex manager stop --repo PATH` 停止，`tca-codex manager start --repo PATH` 重启。会话临近过期时，M 使用本机 SSH 私钥重新登录；私钥和 GitHub token 不会发送给 C。仅用 `--project-id` 创建项目而没有 M 工作树时，须在工作树执行 `tca-codex join --role m --repo PATH --server-url ...` 才能启动常驻 M。
 
-将生成的 `AGENTS.md`、`.agents/skills/`、`.tca/project.yaml`、`.gitignore` 提交推送；`.tca/agent-id` 只留本地。随后本人在另一工作树运行 `tca-codex join --role a --repo PATH --server-url https://YOUR_TCA_HOST/mcp`；另一位开发者运行 `tca-codex join --repo PATH --server-url https://YOUR_TCA_HOST/mcp`。各工作树运行 `tca-codex doctor --repo PATH`。A 工作树生成的 `.codex/hooks.json` 仅留本机，首次打开 Codex 时在设置中的 Hooks 审核并信任它；未经信任就不会采集。M 也可由创建者用 `tca-codex delegate-m` 委派给其他有读取权限的成员；原 M 应在自己的电脑上停止旧进程，新 M 在自己的工作树执行 `tca-codex join --role m`。
+将生成的 `AGENTS.md`、`.agents/skills/`、`.tca/project.yaml`、`.gitignore` 提交推送；`.tca/agent-id` 只留本地。随后本人在另一工作树运行 `tca-agent join --role a --repo PATH --server-url https://YOUR_TCA_HOST/mcp --client codex`；另一位开发者运行 `tca-agent join --repo PATH --server-url https://YOUR_TCA_HOST/mcp --client pi`（也可选 `opencode`、`dsh`、`codex`）。各工作树运行 `tca-agent doctor --repo PATH --client CLIENT`。A 的适配器文件只留本机，按客户端提示审阅并信任。M 也可由创建者用 `tca-codex delegate-m` 委派给其他有读取权限的成员；原 M 应在自己的电脑上停止旧进程，新 M 在自己的工作树执行 `tca-codex join --role m`。
+
+### 不同编码工具混用
+
+`tca-agent` 和 `tca-codex` 是同一个接入 CLI 的两个名称。每个 A 在自己的 Git 工作树选择 `--client codex|opencode|pi|dsh`；它们共享同一个项目 ID、C、Claim 状态和 MCP 工具，因此一个 A 用 dsh、另一个用 Codex 也能协作。**常驻 M 目前仍需要 Codex**，其他工具当前作为 A 使用。TCA 不额外索要模型 API key；所选编码工具仍需按自身方式登录模型。
+
+```bash
+export TCA_TOKEN="$(tca-agent token --server-url https://YOUR_TCA_HOST/mcp)"
+tca-agent join --repo /path/to/your-checkout --server-url https://YOUR_TCA_HOST/mcp --client pi
+tca-agent doctor --repo /path/to/your-checkout --client pi
+```
+
+适配器只写本机项目配置和轮次结束触发器，不把凭据写进仓库。Pi 首次运行时需先信任项目，才会加载 `.pi/mcp.json` 与 `.pi/extensions/tca.ts`。OpenCode 读取 `.opencode/opencode.json` 和按版本生成的插件（V1 为 `.opencode/plugin/tca.ts`，V2 为 `.opencode/plugins/tca/index.ts`）。dsh 需在所选 profile 安装与 dsh 包版本一致的两个插件，再带生成的 patch 启动：
+
+```bash
+dsh plugin --profile headless add -w @deepseek-ai/dsh-mcp-client@YOUR_DSH_VERSION @deepseek-ai/dsh-hooks-claude-code@YOUR_DSH_VERSION
+dsh --profile headless --patch /path/to/your-checkout/.tca/dsh.patch.yml "你的任务"
+```
+
+平时用 dsh web 界面的，可将 `headless` 换成 `web`。这些文件含本机绝对路径，已被 Git 忽略；每台电脑需各自运行 `join` 生成。本机单电脑模式可用 `tca-agent init --client CLIENT --repo PATH --agent-id agent-a1`，M 仍使用 Codex。`doctor` 对 Pi/OpenCode 检查本机 MCP 连接，对 dsh 检查 patch 组合；它不运行模型对话。
 
 已接入旧版本的 A 工作树，更新 CLI 和线上 C 后重新运行 `tca-codex join --repo PATH --server-url https://YOUR_TCA_HOST/mcp --replace-local-config`，再审核新 hook。
 
