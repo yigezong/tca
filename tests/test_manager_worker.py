@@ -62,6 +62,55 @@ def test_resident_m_rejects_a_worktree(tmp_path: Path) -> None:
         project(repo)
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize("client", ["pi", "opencode", "dsh"])
+async def test_resident_m_other_clients_commit_decision_through_c(tmp_path: Path, monkeypatch,
+                                                                      client: str) -> None:
+    import json
+
+    monkeypatch.setenv("TCA_HOME", str(tmp_path / "home"))
+    repo = tmp_path / "repo"
+    (repo / ".tca").mkdir(parents=True)
+    (repo / ".tca" / "agent-id").write_text("agent-m\n")
+    (repo / ".tca" / "project.yaml").write_text(
+        "version: 1\nproject_id: team/project\nmode: local\nmcp:\n  server: tca_local\n")
+    database = tmp_path / "home" / "coordination.db"
+    database.parent.mkdir()
+    controller = Controller(ClaimStore(database), BasicRuleChecker())
+    controller.submit_claim(Claim(
+        claim_id="a1", project_id="team/project", author="agent-a1",
+        base_commit="abc123", work_branch="feature/agent-a1/a1", goal="add inventory",
+        planned_paths=("src/inventory.py",), coordination_group="checkout",
+    ))
+    fake = tmp_path / client
+    fake.write_text("""#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+args = sys.argv[1:]
+if Path(sys.argv[0]).name == 'pi':
+    assert '--no-tools' in args and '--no-mcp' in args
+    prompt = args[-1]
+elif Path(sys.argv[0]).name == 'opencode':
+    assert args[:4] == ['run', '--pure', '--agent', 'plan']
+    prompt = args[-1]
+else:
+    assert '--permission-mode' in args and 'read-only' in args
+    prompt = sys.stdin.read()
+assert 'add inventory' in prompt
+assert 'TCA_TOKEN' not in os.environ
+print(json.dumps({'advice': 'Own inventory.py; keep reserve stable.',
+    'state': 'approved_with_constraints', 'reason': 'Clear ownership',
+    'constraints': ['Keep reserve stable'], 'wait_for': [], 'conflicts_with': [],
+    'boundary_contract': 'reserve(sku) -> bool'}))
+""")
+    fake.chmod(0o700)
+    monkeypatch.setenv("TCA_TOKEN", "tca_secret-do-not-pass")
+    assert await process_one(repo, project(repo), str(fake), timeout=0, client=client)
+    assert controller.get_claim_state("team/project", "a1")["state"] == "approved_with_constraints"
+    advice = controller.get_integration_context("team/project", "a1")["advice"]
+    assert advice[0]["message"] == "Own inventory.py; keep reserve stable."
+
+
 def test_resident_m_renews_expiring_session_with_original_key(tmp_path: Path, monkeypatch) -> None:
     import json
 
@@ -82,3 +131,24 @@ def test_resident_m_renews_expiring_session_with_original_key(tmp_path: Path, mo
     monkeypatch.setattr("tca.manager_worker.login_command", refresh)
     assert session_token(server, "TCA_TOKEN") == "tca_new"
     assert seen == [("alice", tmp_path / "alice-key")]
+
+
+def test_launchd_uses_selected_m_client_without_embedding_token(tmp_path: Path, monkeypatch) -> None:
+    import plistlib
+    from tca import manager_service
+
+    repo = tmp_path / "repo"
+    (repo / ".tca").mkdir(parents=True)
+    (repo / ".tca/manager-client").write_text("pi\n")
+    monkeypatch.setattr(manager_service.sys, "platform", "darwin")
+    monkeypatch.setattr(manager_service.shutil, "which", lambda _: "/usr/local/bin/pi")
+    monkeypatch.setattr(manager_service, "paths", lambda _: (tmp_path / "m.plist", tmp_path / "m.log"))
+    monkeypatch.setattr(manager_service, "running", lambda _: False)
+    monkeypatch.setenv("TCA_TOKEN", "tca_secret-do-not-save")
+    monkeypatch.setattr(manager_service.subprocess, "run", lambda *a, **k:
+                        type("Result", (), {"returncode": 0})())
+    manager_service.start(repo)
+    content = (tmp_path / "m.plist").read_bytes()
+    arguments = plistlib.loads(content)["ProgramArguments"]
+    assert arguments[-4:] == ["--client", "pi", "--client-bin", "/usr/local/bin/pi"]
+    assert b"tca_secret-do-not-save" not in content

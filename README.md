@@ -70,7 +70,7 @@ A creator with write permission may run **one read-only M and one A in separate 
 
 ### Hosted C: multiple computers
 
-The shared service needs HTTPS, a shared database (Postgres is recommended), and a GitHub App installed on each participating repository with **Metadata: read** only. The App checks current repository permissions; it needs neither Contents nor write access. Each person installs Codex and the TCA CLI:
+The shared service needs HTTPS, a shared database (Postgres is recommended), and a GitHub App installed on each participating repository with **Metadata: read** only. The App checks current repository permissions; it needs neither Contents nor write access. Each person installs one supported coding client (Codex, Pi, OpenCode, or dsh) and the TCA CLI:
 
 ```bash
 git clone https://github.com/yigezong/tca.git
@@ -87,13 +87,13 @@ export TCA_TOKEN="$(tca-codex token --server-url https://YOUR_TCA_HOST/mcp)"
 
 Never put the session token, GitHub token, or private key in chat, repository files, or screenshots. Codex Desktop may need `TCA_TOKEN` set in its own launch environment and a new chat. For the two-person experiment, deploy the version of C that permits a writing creator to act as M and A, and update the CLI on both computers.
 
-The creator runs `tca-codex start --repo PATH --server-url https://YOUR_TCA_HOST/mcp` in an M checkout. On macOS, this automatically starts a user-level resident M. It polls C and invokes read-only Codex only when a task arrives, then publishes advice and a decision. Closing the terminal does not stop it; sleep, shutdown, or loss of network pauses it while C retains pending tasks. Use `tca-codex manager status --repo PATH` to see status and the log path, `tca-codex manager stop --repo PATH` to stop it, and `tca-codex manager start --repo PATH` to restart it. M renews its short-lived session with the local SSH key before expiry. If the project was created with `--project-id` and no checkout, run `tca-codex join --role m --repo PATH --server-url ...` in an M checkout to start it.
+The creator runs `tca-agent start --repo PATH --server-url https://YOUR_TCA_HOST/mcp --client CLIENT` in an M checkout, where `CLIENT` is `codex`, `pi`, `opencode`, or `dsh`. On macOS, this automatically starts a user-level resident M using that client. It polls C and invokes the selected client only when a task arrives, then publishes advice and a decision. Closing the terminal does not stop it; sleep, shutdown, or loss of network pauses it while C retains pending tasks. Use `tca-codex manager status --repo PATH` to see status and the log path, `tca-codex manager stop --repo PATH` to stop it, and `tca-codex manager start --repo PATH` to restart it. M renews its short-lived session with the local SSH key before expiry. If the project was created with `--project-id` and no checkout, run `tca-agent join --role m --repo PATH --server-url ... --client CLIENT` in an M checkout to start it.
 
-Commit the generated `AGENTS.md`, `.agents/skills/`, `.tca/project.yaml`, and `.gitignore`; `.tca/agent-id` remains local. In a separate checkout, the same person runs `tca-agent join --role a --repo PATH --server-url ... --client codex`; the other developer runs `tca-agent join --repo PATH --server-url ... --client pi` (or `opencode`, `dsh`, `codex`). Use `tca-agent doctor --client CLIENT --repo PATH` in every checkout. An A checkout's adapter files stay local; review and trust them in the client. The creator may instead delegate M to another repository reader; stop the old M process and have the new M run `tca-codex join --role m` in their checkout.
+Commit the generated `AGENTS.md`, `.agents/skills/`, `.tca/project.yaml`, and `.gitignore`; `.tca/agent-id` remains local. In a separate checkout, the same person runs `tca-agent join --role a --repo PATH --server-url ... --client codex`; the other developer runs `tca-agent join --repo PATH --server-url ... --client pi` (or `opencode`, `dsh`, `codex`). Use `tca-agent doctor --client CLIENT --repo PATH` in every checkout. An A checkout's adapter files stay local; review and trust them in the client. The creator may instead delegate M to another repository reader; stop the old M process and have the new M run `tca-agent join --role m --client CLIENT` in their checkout.
 
 ### Mix coding agents in one project
 
-`tca-agent` and `tca-codex` are aliases for the same setup CLI. Each A chooses `--client codex|opencode|pi|dsh` in their own Git checkout. All clients use the same project ID, C, Claim states, and MCP tools; the choice of editor/model remains local to each developer. For example, one A can use dsh while another uses Codex. The **resident M worker currently requires Codex**; other clients are supported as A. TCA itself does not require a model API key, although the chosen coding client needs its normal model login.
+`tca-agent` and `tca-codex` are aliases for the same setup CLI. Each A chooses `--client codex|opencode|pi|dsh` in their own Git checkout. All clients use the same project ID, C, Claim states, and MCP tools; the choice of editor/model remains local to each developer. For example, one A can use dsh while another uses Codex. M and every A may choose different clients. The resident M executes a read-only coordination prompt in the selected client, and the worker submits its advice and decision to C through the protocol. The chosen client needs its own model login or credentials in the environment that starts M. TCA itself does not require a model API key, although the chosen coding client needs its normal model login.
 
 ```bash
 # After the project creator has started C and each person has logged in:
@@ -102,14 +102,15 @@ tca-agent join --repo /path/to/your-checkout --server-url https://YOUR_TCA_HOST/
 tca-agent doctor --repo /path/to/your-checkout --client pi
 ```
 
-The adapter writes only project-local configuration and a turn-end trigger; it never writes a credential into the repo. Pi first asks you to trust the project, then loads `.pi/mcp.json` and `.pi/extensions/tca.ts`. OpenCode loads `.opencode/opencode.json` and a version-matched plugin (`.opencode/plugin/tca.ts` on V1, `.opencode/plugins/tca/index.ts` on V2). For dsh, install the two plugins at the same version as your `dsh` package, then launch the selected profile with the generated patch:
+The adapter writes only project-local configuration and a turn-end trigger; it never writes a credential into the repo. Pi first asks you to trust the project, then loads `.pi/mcp.json` and `.pi/extensions/tca.ts`. OpenCode loads `.opencode/opencode.json` and a version-matched plugin (`.opencode/plugin/tca.ts` on V1, `.opencode/plugins/tca/index.ts` on V2). For dsh, run the TCA launcher after `join`. It installs the profile's missing TCA MCP plugin and, for an A, the Stop hook plugin, then starts dsh with the generated patch:
 
 ```bash
-dsh plugin --profile headless add -w @deepseek-ai/dsh-mcp-client@YOUR_DSH_VERSION @deepseek-ai/dsh-hooks-claude-code@YOUR_DSH_VERSION
-dsh --profile headless --patch /path/to/your-checkout/.tca/dsh.patch.yml "your task"
+tca-agent dsh-open --repo /path/to/your-checkout             # web UI
+tca-agent doctor --repo /path/to/your-checkout --client dsh  # check web profile
+# Or use --profile headless for a headless dsh session.
 ```
 
-Use a web profile in place of `headless` if that is your normal dsh interface. The adapter files contain local paths, are ignored by Git, and should be regenerated with `join` on each computer. In local single-computer mode, use `tca-agent init --client CLIENT --repo PATH --agent-id agent-a1`; keep Codex for M. `doctor` checks local MCP connection for Pi and OpenCode and patch composition for dsh; it does not run a model turn.
+The adapter files contain local paths, are ignored by Git, and should be regenerated with `join` on each computer. In local single-computer mode, use `tca-agent init --client CLIENT --repo PATH --agent-id agent-a1`; choose any supported client for M. `doctor` checks local MCP connection for Pi and OpenCode and patch composition for dsh; it does not run a model turn. M does not install an A turn-end hook. The resident M service currently uses macOS launchd; on other systems run `tca-agent manager run --repo PATH` in a persistent terminal or service. Model credentials must be available to that process. The older `tca_bridge.py`/`TCA_API_TOKEN` recipe is obsolete: use `tca-agent login`, `TCA_TOKEN`, and the generated native MCP configuration.
 
 For an existing A checkout, update the CLI and hosted C, rerun `tca-codex join --repo PATH --server-url https://YOUR_TCA_HOST/mcp --replace-local-config`, then review the new hook.
 

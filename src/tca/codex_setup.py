@@ -90,8 +90,15 @@ def legacy_skill_text() -> str:
             .replace("A trusted local turn-end adapter", "A trusted local Codex Stop hook")
             .replace("The adapter cannot infer", "The hook cannot infer")
             .replace("its latest completed agent turn", "its latest completed Codex turn")
-            .replace("The resident M worker uses Codex and polls C for new tasks.",
+            .replace("The resident M worker uses the locally selected coding client and polls C for new tasks.",
                      "If there is no task, tell the user and wait for the next request; a Codex chat is not an always-on daemon."))
+
+
+def previous_skill_text() -> str:
+    """The generated multi-client skill before configurable resident M."""
+    return skill_text().replace(
+        "The resident M worker uses the locally selected coding client and polls C for new tasks.",
+        "The resident M worker uses Codex and polls C for new tasks.")
 
 
 def desired_transport(mode: str, server_url: str, token_env: str) -> dict:
@@ -171,7 +178,7 @@ def ensure_agent_note(repo: Path) -> None:
 def ensure_ignore(repo: Path, client: str = "codex") -> None:
     path = repo / ".gitignore"
     existing = path.read_text(encoding="utf-8") if path.exists() else ""
-    entries = [".tca/agent-id", ".codex/hooks.json"]
+    entries = [".tca/agent-id", ".tca/manager-client", ".codex/hooks.json"]
     entries += {"pi": [".pi/mcp.json", ".pi/extensions/tca.ts"],
                 "opencode": [".opencode/opencode.json", ".opencode/plugins/tca/",
                              ".opencode/plugin/tca.ts"],
@@ -213,8 +220,6 @@ def ensure_turn_hook(repo: Path) -> None:
 
 def setup(args: argparse.Namespace) -> None:
     client = getattr(args, "client", "codex")
-    if args.agent_id == "agent-m" and client != "codex":
-        raise SetupError("The resident M worker currently requires Codex; choose --client codex for M")
     if client == "codex" and not shutil.which("codex"):
         raise SetupError("Codex CLI is not on PATH; install/open Codex CLI first")
     if client != "codex" and not shutil.which(client):
@@ -257,7 +262,7 @@ def setup(args: argparse.Namespace) -> None:
     overwrite_paths = {project_path, identity_path} if migrating_config else set()
     if skill_path.exists():
         existing_skill = skill_path.read_text(encoding="utf-8")
-        if existing_skill == legacy_skill_text() or (migrating_config
+        if existing_skill in {legacy_skill_text(), previous_skill_text()} or (migrating_config
                 and existing_skill.startswith("---\nname: tca-coordination\n")
                 and "# TCA in Codex" in existing_skill):
             overwrite_paths.add(skill_path)
@@ -287,6 +292,11 @@ def setup(args: argparse.Namespace) -> None:
         ensure_file(identity_path, args.agent_id + "\n")
     ensure_agent_note(repo)
     ensure_ignore(repo, client)
+    if args.agent_id == "agent-m":
+        (repo / ".tca" / "manager-client").write_text(client + "\n", encoding="utf-8")
+        if client != "codex":
+            from .agent_adapters import install_adapter
+            install_adapter(client, repo, mcp_name, desired, capture=False)
     if args.agent_id != "agent-m":
         if client == "codex":
             ensure_turn_hook(repo)
@@ -355,10 +365,11 @@ def doctor(args: argparse.Namespace) -> int:
             if listed.returncode or mcp_name not in listed.stdout or "connected" not in listed.stdout:
                 issues.append(f"{client} MCP is not connected; check project trust, token, and client MCP list")
         elif client == "dsh" and shutil.which("dsh"):
-            listed = subprocess.run(["dsh", "--profile", "headless", "--dump-config",
+            listed = subprocess.run(["dsh", "--profile", getattr(args, "dsh_profile", "web"), "--dump-config",
                                      "--patch", str(adapter_path)], cwd=repo, text=True,
                                     capture_output=True, check=False, timeout=30)
-            if listed.returncode or "mcp-" + mcp_name not in listed.stdout or "tca-turn-hook" not in listed.stdout:
+            expected = ["mcp-" + mcp_name] + ([] if identity == "agent-m" else ["tca-turn-hook"])
+            if listed.returncode or any(item not in listed.stdout for item in expected):
                 issues.append("dsh profile did not load the TCA patch")
         if mode == "local":
             try:
@@ -402,7 +413,7 @@ def doctor(args: argparse.Namespace) -> int:
     for issue in issues:
         print("FAIL:", issue)
     if not issues:
-        print(f"OK: {client} TCA MCP, turn capture, skill, project, and identity for {repo}")
+        print(f"OK: {client} TCA MCP, skill, project, and identity for {repo}")
         if mode == "remote":
             print("Remote project access verified." if client == "codex" and
                   config.get("mcp", {}).get("token_env") == "TCA_TOKEN"
@@ -504,9 +515,6 @@ def _project_api(server_url: str, token: str, path: str,
 
 
 def project_command(args: argparse.Namespace) -> None:
-    if getattr(args, "client", "codex") != "codex" and (args.command == "start"
-            or (args.command == "join" and getattr(args, "role", None) == "m")):
-        raise SetupError("The resident M worker currently requires Codex; choose --client codex for M")
     token = _tca_token(args.server_url, args.token_env)
     if args.command == "projects":
         result = _project_api(args.server_url, token, "/api/projects")
@@ -554,9 +562,12 @@ def project_command(args: argparse.Namespace) -> None:
     print(f"Joined {project_id} as {result['role'].upper()} ({agent_id}).")
     print(f"{getattr(args, 'client', 'codex')} must have {args.token_env} in its environment when it starts.")
     if agent_id == "agent-m":
-        from .manager_service import start
-        start(repo)
-        print("M is running in the background; check it with 'tca-codex manager status --repo PATH'.")
+        if sys.platform == "darwin":
+            from .manager_service import start
+            start(repo)
+            print("M is running in the background; check it with 'tca-agent manager status --repo PATH'.")
+        else:
+            print(f"Start M with 'tca-agent manager run --repo {shlex.quote(str(repo))}' in a persistent terminal.")
 
 
 def manager_command(args: argparse.Namespace) -> None:
@@ -565,15 +576,61 @@ def manager_command(args: argparse.Namespace) -> None:
     identity = repo / ".tca" / "agent-id"
     if not identity.exists() or identity.read_text().strip() != "agent-m":
         raise SetupError("manager commands require an agent-m worktree")
+    if args.action == "run":
+        from .manager_worker import serve
+        selection = repo / ".tca" / "manager-client"
+        client = selection.read_text(encoding="utf-8").strip() if selection.exists() else "codex"
+        if client not in {"codex", "pi", "opencode", "dsh"}:
+            raise SetupError(f"unsupported M client: {client}")
+        client_bin = shutil.which(client)
+        if not client_bin:
+            raise SetupError(f"{client} CLI is not on PATH")
+        asyncio.run(serve(repo, client_bin, client=client))
+        return
     if args.action == "start":
         start(repo)
     elif args.action == "stop":
         stop(repo)
     elif args.action == "status":
         log_path = paths(repo)[1]
-        print(f"M {'running' if running(repo) else 'stopped'} for {repo}; log: {log_path}")
+        selected = (repo / ".tca" / "manager-client")
+        client = selected.read_text().strip() if selected.exists() else "codex"
+        print(f"M {'running' if running(repo) else 'stopped'} ({client}) for {repo}; log: {log_path}")
         return
     print(f"M {args.action} complete for {repo}.")
+
+
+def dsh_open(args: argparse.Namespace) -> None:
+    """Install the profile plugins TCA needs, then open dsh with this repo's patch."""
+    repo = git_root(args.repo)
+    patch = repo / ".tca" / "dsh.patch.yml"
+    if not patch.is_file():
+        raise SetupError("missing dsh TCA patch; run 'tca-agent join --client dsh' first")
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", args.profile):
+        raise SetupError("invalid dsh profile name")
+    binary = shutil.which("dsh")
+    if not binary:
+        raise SetupError("dsh CLI is not on PATH")
+    identity_path = repo / ".tca" / "agent-id"
+    if not identity_path.is_file():
+        raise SetupError("missing local agent identity; run 'tca-agent join --client dsh' first")
+    identity = identity_path.read_text(encoding="utf-8").strip()
+    packages = ["@deepseek-ai/dsh-mcp-client"]
+    if identity != "agent-m":
+        packages.append("@deepseek-ai/dsh-hooks-claude-code")
+    profile_dir = Path(os.getenv("DSH_HOME", str(Path.home() / ".dsh"))) / "profiles" / args.profile
+    package_file = profile_dir / "package.json"
+    try:
+        installed = json.loads(package_file.read_text()).get("dependencies", {}) if package_file.exists() else {}
+    except (ValueError, OSError):
+        installed = {}
+    missing = [package for package in packages if package not in installed]
+    if missing:
+        result = subprocess.run([binary, "plugin", "--profile", args.profile, "add", "-w", *missing],
+                                text=True, capture_output=True, check=False, timeout=300)
+        if result.returncode:
+            raise SetupError(f"Could not install dsh TCA plugins: {result.stderr.strip() or result.stdout.strip()}")
+    os.execv(binary, [binary, "--profile", args.profile, "--patch", str(patch), *args.client_args])
 
 
 def main() -> None:
@@ -592,6 +649,7 @@ def main() -> None:
     check = sub.add_parser("doctor", help="check Codex and TCA setup")
     check.add_argument("--repo", type=Path, default=Path.cwd())
     check.add_argument("--client", choices=("codex", "opencode", "pi", "dsh"), default="codex")
+    check.add_argument("--dsh-profile", default="web")
     login = sub.add_parser("login", help="sign a challenge with a GitHub-listed SSH key")
     login.add_argument("--server-url", required=True)
     login.add_argument("--login", required=True)
@@ -599,8 +657,12 @@ def main() -> None:
     session = sub.add_parser("token", help="print the local TCA-only session token")
     session.add_argument("--server-url", required=True)
     manager = sub.add_parser("manager", help="control the resident M process")
-    manager.add_argument("action", choices=("start", "status", "stop"))
+    manager.add_argument("action", choices=("start", "status", "stop", "run"))
     manager.add_argument("--repo", type=Path, default=Path.cwd())
+    dsh_command = sub.add_parser("dsh-open", help="install required plugins and open dsh with TCA")
+    dsh_command.add_argument("--repo", type=Path, default=Path.cwd())
+    dsh_command.add_argument("--profile", default="web")
+    dsh_command.add_argument("client_args", nargs="*")
     for name in ("start", "join", "projects", "delegate-m"):
         command = sub.add_parser(name, help=f"GitHub project {name}")
         if name != "projects":
@@ -629,14 +691,20 @@ def main() -> None:
         if args.command == "manager":
             manager_command(args)
             return
+        if args.command == "dsh-open":
+            dsh_open(args)
+            return
         if args.command in {"start", "join", "projects", "delegate-m"}:
             project_command(args)
             return
         result = setup(args) if args.command == "init" else doctor(args)
         if args.command == "init" and args.agent_id == "agent-m" and args.mode == "local":
-            from .manager_service import start
-            start(git_root(args.repo))
-            print("M is running in the background; check it with 'tca-codex manager status --repo PATH'.")
+            if sys.platform == "darwin":
+                from .manager_service import start
+                start(git_root(args.repo))
+                print("M is running in the background; check it with 'tca-agent manager status --repo PATH'.")
+            else:
+                print(f"Start M with 'tca-agent manager run --repo {shlex.quote(str(git_root(args.repo)))}' in a persistent terminal.")
     except SetupError as exc:
         parser.exit(2, f"tca-codex: {exc}\n")
     if result:

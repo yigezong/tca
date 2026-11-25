@@ -6,7 +6,7 @@ import sys
 import pytest
 
 from tca.agent_adapters import install_adapter
-from tca.codex_setup import SetupError, setup
+from tca.codex_setup import SetupError, dsh_open, setup
 from tca.controller import Controller
 from tca.domain import ClaimState, Decision
 from tca.rules import BasicRuleChecker
@@ -59,6 +59,28 @@ def test_remote_configs_reference_token_env_not_secret(tmp_path):
         assert "tca_secret-session" not in encoded
 
 
+def test_dsh_open_installs_role_plugins_and_launches_patch(tmp_path, monkeypatch):
+    repo = tmp_path / "project"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    (repo / ".tca").mkdir()
+    (repo / ".tca/agent-id").write_text("agent-m\n")
+    patch = repo / ".tca/dsh.patch.yml"
+    patch.write_text("[]\n")
+    monkeypatch.setenv("DSH_HOME", str(tmp_path / "dsh-home"))
+    monkeypatch.setattr("tca.codex_setup.git_root", lambda _: repo)
+    monkeypatch.setattr("tca.codex_setup.shutil.which", lambda _: "/bin/dsh")
+    calls = []
+    monkeypatch.setattr("tca.codex_setup.subprocess.run", lambda argv, **kwargs:
+                        (calls.append(argv) or type("Result", (), {"returncode": 0})()))
+    monkeypatch.setattr("tca.codex_setup.os.execv", lambda binary, argv:
+                        calls.append([binary, *argv]))
+    dsh_open(argparse.Namespace(repo=repo, profile="web", client_args=[]))
+    assert calls[0] == ["/bin/dsh", "plugin", "--profile", "web", "add", "-w",
+                        "@deepseek-ai/dsh-mcp-client"]
+    assert calls[1][-4:] == ["--profile", "web", "--patch", str(patch)]
+
+
 def test_opencode_v1_uses_compatible_plugin(tmp_path, monkeypatch):
     monkeypatch.setattr("tca.agent_adapters._opencode_major", lambda: 1)
     repo = tmp_path / "opencode"
@@ -70,13 +92,22 @@ def test_opencode_v1_uses_compatible_plugin(tmp_path, monkeypatch):
     assert "session.idle" in (repo / ".opencode/plugin/tca.ts").read_text()
 
 
-def test_manager_requires_codex_before_writing_files(tmp_path, monkeypatch):
-    repo = tmp_path / "manager"
+@pytest.mark.parametrize("client", ["pi", "opencode", "dsh"])
+def test_manager_installs_mcp_without_a_turn_capture(tmp_path, monkeypatch, client):
+    repo = tmp_path / client
     repo.mkdir()
     _git(repo, "init", "-b", "main")
-    with pytest.raises(SetupError, match="requires Codex"):
-        setup(argparse.Namespace(repo=repo, agent_id="agent-m", client="pi"))
-    assert not (repo / ".tca").exists()
+    monkeypatch.setattr("tca.codex_setup.shutil.which", lambda _: "/usr/bin/true")
+    args = argparse.Namespace(repo=repo, agent_id="agent-m", project_id="team/project",
+                              mode="local", server_url="", token_env="TCA_TOKEN",
+                              replace_mcp=False, client=client)
+    setup(args)
+    assert (repo / ".tca/manager-client").read_text() == client + "\n"
+    config = {"pi": repo / ".pi/mcp.json", "opencode": repo / ".opencode/opencode.json",
+              "dsh": repo / ".tca/dsh.patch.yml"}[client].read_text()
+    assert "tca.local_mcp" in config
+    assert "tca.capture_cli" not in config
+    assert ".tca/manager-client" in (repo / ".gitignore").read_text()
 
 
 def test_cross_client_capture_uses_same_controller_state(tmp_path, monkeypatch):

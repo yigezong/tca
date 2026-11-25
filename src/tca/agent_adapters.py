@@ -36,7 +36,7 @@ def _opencode_major() -> int:
     return int(match.group(1)) if match else 2
 
 
-def install_pi(repo: Path, name: str, transport: dict) -> None:
+def install_pi(repo: Path, name: str, transport: dict, *, capture: bool = True) -> None:
     config = repo / ".pi" / "mcp.json"
     current = json.loads(config.read_text(encoding="utf-8")) if config.exists() else {}
     if not isinstance(current, dict) or not isinstance(current.get("mcpServers", {}), dict):
@@ -51,6 +51,8 @@ def install_pi(repo: Path, name: str, transport: dict) -> None:
     current.setdefault("mcpServers", {})[name] = entry
     config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text(json.dumps(current, indent=2) + "\n", encoding="utf-8")
+    if not capture:
+        return
     extension = '''// TCA publishes bounded Git metadata when Pi becomes idle after a run.
 export default function (pi) {
   pi.on("agent_settled", async (event, ctx) => {
@@ -65,7 +67,7 @@ export default function (pi) {
     _write_owned(repo / ".pi" / "extensions" / "tca.ts", extension)
 
 
-def install_opencode(repo: Path, name: str, transport: dict) -> None:
+def install_opencode(repo: Path, name: str, transport: dict, *, capture: bool = True) -> None:
     config = repo / ".opencode" / "opencode.json"
     current = json.loads(config.read_text(encoding="utf-8")) if config.exists() else {}
     if not isinstance(current, dict) or not isinstance(current.get("mcp", {}), dict):
@@ -79,15 +81,18 @@ def install_opencode(repo: Path, name: str, transport: dict) -> None:
         raise ValueError(f"OpenCode MCP server '{name}' already differs in {config}")
     mcp["servers"][name] = entry
     v1 = _opencode_major() < 2
-    plugin_key = "plugin" if v1 else "plugins"
-    plugin_path = "./plugin/tca.ts" if v1 else "./plugins/tca"
-    plugins = current.setdefault(plugin_key, [])
-    if not isinstance(plugins, list):
-        raise ValueError(f"Invalid OpenCode plugins in {config}")
-    if plugin_path not in plugins:
-        plugins.append(plugin_path)
+    if capture:
+        plugin_key = "plugin" if v1 else "plugins"
+        plugin_path = "./plugin/tca.ts" if v1 else "./plugins/tca"
+        plugins = current.setdefault(plugin_key, [])
+        if not isinstance(plugins, list):
+            raise ValueError(f"Invalid OpenCode plugins in {config}")
+        if plugin_path not in plugins:
+            plugins.append(plugin_path)
     config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text(json.dumps(current, indent=2) + "\n", encoding="utf-8")
+    if not capture:
+        return
     plugin = '''import { Plugin } from "@opencode/plugin";
 import { execFile } from "node:child_process";
 
@@ -137,13 +142,14 @@ export const TCA = async ({ directory }) => {
     _write_owned(path, plugin)
 
 
-def install_dsh(repo: Path, name: str, transport: dict) -> None:
+def install_dsh(repo: Path, name: str, transport: dict, *, capture: bool = True) -> None:
     command = (shlex.quote(sys.executable) + " -m tca.capture_cli --repo "
                + shlex.quote(str(repo)))
     hook = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": command,
                                                "timeout": 30}]}]}}
     hook_path = repo / ".tca" / "dsh-hooks.json"
-    _write_owned(hook_path, json.dumps(hook, indent=2) + "\n")
+    if capture:
+        _write_owned(hook_path, json.dumps(hook, indent=2) + "\n")
     mcp = {"serverName": name, "transport": "stdio" if transport["type"] == "stdio"
            else "streamable-http"}
     if transport["type"] == "stdio":
@@ -153,11 +159,13 @@ def install_dsh(repo: Path, name: str, transport: dict) -> None:
         mcp["headers"] = {"Authorization": "!!js '`Bearer ${process.env."
                           + transport["bearer_token_env_var"] + "}`'"}
     # DSH patch lists append plugins to the selected profile; no profile is modified.
-    patch = [
-        {"insert": [{"id": "mcp-" + name, "name": "@deepseek-ai/dsh-mcp-client", "config": mcp}]},
-        {"insert": [{"id": "tca-turn-hook", "name": "@deepseek-ai/dsh-hooks-claude-code",
-                     "config": {"configPath": str(hook_path), "projectDir": str(repo)}}]},
-    ]
+    patch = [{"insert": [{"id": "mcp-" + name,
+                          "name": "@deepseek-ai/dsh-mcp-client", "config": mcp}]}]
+    if capture:
+        patch.append({"insert": [{"id": "tca-turn-hook",
+                                  "name": "@deepseek-ai/dsh-hooks-claude-code",
+                                  "config": {"configPath": str(hook_path),
+                                             "projectDir": str(repo)}}]})
     rendered = yaml.safe_dump(patch, sort_keys=False, allow_unicode=True)
     # PyYAML quotes the expression; DSH requires a YAML tag evaluated at boot.
     if transport["type"] != "stdio":
@@ -166,10 +174,11 @@ def install_dsh(repo: Path, name: str, transport: dict) -> None:
     _write_owned(repo / ".tca" / "dsh.patch.yml", rendered)
 
 
-def install_adapter(client: str, repo: Path, name: str, transport: dict) -> None:
+def install_adapter(client: str, repo: Path, name: str, transport: dict,
+                    *, capture: bool = True) -> None:
     try:
         {"pi": install_pi, "opencode": install_opencode, "dsh": install_dsh}[client](
-            repo, name, transport)
+            repo, name, transport, capture=capture)
     except ValueError as exc:
         from .codex_setup import SetupError
         raise SetupError(str(exc)) from exc

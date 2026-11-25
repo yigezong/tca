@@ -35,10 +35,14 @@ def running(repo: Path) -> bool:
 def start(repo: Path) -> None:
     if sys.platform != "darwin":
         raise SetupError("resident M currently requires macOS launchd")
-    codex = shutil.which("codex")
-    if codex is None:
-        raise SetupError("Codex CLI is not on PATH")
     repo = repo.resolve()
+    selection = repo / ".tca" / "manager-client"
+    client = selection.read_text(encoding="utf-8").strip() if selection.exists() else "codex"
+    if client not in {"codex", "pi", "opencode", "dsh"}:
+        raise SetupError(f"Unsupported M client in {selection}: {client}")
+    client_bin = shutil.which(client)
+    if client_bin is None:
+        raise SetupError(f"{client} CLI is not on PATH")
     plist_path, log_path = paths(repo)
     plist_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -49,7 +53,8 @@ def start(repo: Path) -> None:
     data = {
         "Label": label(repo),
         "ProgramArguments": [sys.executable, "-m", "tca.manager_worker",
-                             "--repo", str(repo), "--codex-bin", codex],
+                             "--repo", str(repo), "--client", client,
+                             "--client-bin", client_bin],
         "WorkingDirectory": str(repo),
         "RunAtLoad": True,
         "KeepAlive": True,

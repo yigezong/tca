@@ -70,7 +70,7 @@ flowchart TD
 
 ### C 已在线上：不同电脑共同使用
 
-服务端使用共享数据库（推荐 Postgres）、HTTPS，以及只对目标仓库申请 **Metadata: read** 的 GitHub App。仓库管理员将 App 安装到目标 repo；它用于查询成员权限，不需要 Contents 或写权限。每个人自己安装 Codex 和 TCA CLI：
+服务端使用共享数据库（推荐 Postgres）、HTTPS，以及只对目标仓库申请 **Metadata: read** 的 GitHub App。仓库管理员将 App 安装到目标 repo；它用于查询成员权限，不需要 Contents 或写权限。每个人安装所选的编码客户端（Codex、Pi、OpenCode 或 dsh）和 TCA CLI：
 
 ```bash
 git clone https://github.com/yigezong/tca.git
@@ -87,13 +87,13 @@ export TCA_TOKEN="$(tca-codex token --server-url https://YOUR_TCA_HOST/mcp)"
 
 不要把 `TCA_TOKEN`、GitHub token 或私钥放进聊天、仓库和截图。Codex 桌面版若不继承终端变量，应在其启动环境配置 `TCA_TOKEN` 后开启新任务。两人实验须在在线 C 部署包含“项目创建者同时可作 M 和 A”功能的版本，并在两台电脑更新 CLI。
 
-项目创建者先在 M 工作树运行 `tca-codex start --repo PATH --server-url https://YOUR_TCA_HOST/mcp`。在 macOS 上这会自动注册并启动一个用户级常驻 M：它轮询 C 的任务队列，有任务时才调用只读 Codex 分析，再把建议和决定送回 C；关掉启动它的终端不影响运行。电脑休眠、关机或离线时 M 暂停，C 会保留待协调任务。运行 `tca-codex manager status --repo PATH` 查看状态和日志，`tca-codex manager stop --repo PATH` 停止，`tca-codex manager start --repo PATH` 重启。会话临近过期时，M 使用本机 SSH 私钥重新登录；私钥和 GitHub token 不会发送给 C。仅用 `--project-id` 创建项目而没有 M 工作树时，须在工作树执行 `tca-codex join --role m --repo PATH --server-url ...` 才能启动常驻 M。
+项目创建者先在 M 工作树运行 `tca-agent start --repo PATH --server-url https://YOUR_TCA_HOST/mcp --client CLIENT`，其中 `CLIENT` 可选 `codex`、`pi`、`opencode` 或 `dsh`。在 macOS 上这会自动注册并启动一个用户级常驻 M：它轮询 C 的任务队列，有任务时才调用所选客户端分析，再由 C 写入建议和决定；关掉启动它的终端不影响运行。电脑休眠、关机或离线时 M 暂停，C 会保留待协调任务。运行 `tca-codex manager status --repo PATH` 查看状态和日志，`tca-codex manager stop --repo PATH` 停止，`tca-codex manager start --repo PATH` 重启。会话临近过期时，M 使用本机 SSH 私钥重新登录；私钥和 GitHub token 不会发送给 C。仅用 `--project-id` 创建项目而没有 M 工作树时，须在工作树执行 `tca-agent join --role m --repo PATH --server-url ... --client CLIENT` 才能启动常驻 M。
 
-将生成的 `AGENTS.md`、`.agents/skills/`、`.tca/project.yaml`、`.gitignore` 提交推送；`.tca/agent-id` 只留本地。随后本人在另一工作树运行 `tca-agent join --role a --repo PATH --server-url https://YOUR_TCA_HOST/mcp --client codex`；另一位开发者运行 `tca-agent join --repo PATH --server-url https://YOUR_TCA_HOST/mcp --client pi`（也可选 `opencode`、`dsh`、`codex`）。各工作树运行 `tca-agent doctor --repo PATH --client CLIENT`。A 的适配器文件只留本机，按客户端提示审阅并信任。M 也可由创建者用 `tca-codex delegate-m` 委派给其他有读取权限的成员；原 M 应在自己的电脑上停止旧进程，新 M 在自己的工作树执行 `tca-codex join --role m`。
+将生成的 `AGENTS.md`、`.agents/skills/`、`.tca/project.yaml`、`.gitignore` 提交推送；`.tca/agent-id` 只留本地。随后本人在另一工作树运行 `tca-agent join --role a --repo PATH --server-url https://YOUR_TCA_HOST/mcp --client codex`；另一位开发者运行 `tca-agent join --repo PATH --server-url https://YOUR_TCA_HOST/mcp --client pi`（也可选 `opencode`、`dsh`、`codex`）。各工作树运行 `tca-agent doctor --repo PATH --client CLIENT`。A 的适配器文件只留本机，按客户端提示审阅并信任。M 也可由创建者用 `tca-codex delegate-m` 委派给其他有读取权限的成员；原 M 应在自己的电脑上停止旧进程，新 M 在自己的工作树执行 `tca-agent join --role m --client CLIENT`。
 
 ### 不同编码工具混用
 
-`tca-agent` 和 `tca-codex` 是同一个接入 CLI 的两个名称。每个 A 在自己的 Git 工作树选择 `--client codex|opencode|pi|dsh`；它们共享同一个项目 ID、C、Claim 状态和 MCP 工具，因此一个 A 用 dsh、另一个用 Codex 也能协作。**常驻 M 目前仍需要 Codex**，其他工具当前作为 A 使用。TCA 不额外索要模型 API key；所选编码工具仍需按自身方式登录模型。
+`tca-agent` 和 `tca-codex` 是同一个接入 CLI 的两个名称。每个 A 在自己的 Git 工作树选择 `--client codex|opencode|pi|dsh`；它们共享同一个项目 ID、C、Claim 状态和 MCP 工具，因此一个 A 用 dsh、另一个用 Codex 也能协作。M 和各个 A 可分别选择不同客户端。常驻 M 只让所选客户端生成协调建议，由 M 工作进程经协议向 C 提交建议和决定，C 负责校验并记录。TCA 不额外索要模型 API key；所选编码工具仍需按自身方式登录模型。
 
 ```bash
 export TCA_TOKEN="$(tca-agent token --server-url https://YOUR_TCA_HOST/mcp)"
@@ -101,14 +101,15 @@ tca-agent join --repo /path/to/your-checkout --server-url https://YOUR_TCA_HOST/
 tca-agent doctor --repo /path/to/your-checkout --client pi
 ```
 
-适配器只写本机项目配置和轮次结束触发器，不把凭据写进仓库。Pi 首次运行时需先信任项目，才会加载 `.pi/mcp.json` 与 `.pi/extensions/tca.ts`。OpenCode 读取 `.opencode/opencode.json` 和按版本生成的插件（V1 为 `.opencode/plugin/tca.ts`，V2 为 `.opencode/plugins/tca/index.ts`）。dsh 需在所选 profile 安装与 dsh 包版本一致的两个插件，再带生成的 patch 启动：
+适配器只写本机项目配置和轮次结束触发器，不把凭据写进仓库。Pi 首次运行时需先信任项目，才会加载 `.pi/mcp.json` 与 `.pi/extensions/tca.ts`。OpenCode 读取 `.opencode/opencode.json` 和按版本生成的插件（V1 为 `.opencode/plugin/tca.ts`，V2 为 `.opencode/plugins/tca/index.ts`）。dsh 在 `join` 后使用 TCA 启动命令。它会为所选 profile 自动补装缺少的 TCA MCP 插件；A 还会安装轮次结束 hook 插件，然后带上本地 patch 启动 dsh：
 
 ```bash
-dsh plugin --profile headless add -w @deepseek-ai/dsh-mcp-client@YOUR_DSH_VERSION @deepseek-ai/dsh-hooks-claude-code@YOUR_DSH_VERSION
-dsh --profile headless --patch /path/to/your-checkout/.tca/dsh.patch.yml "你的任务"
+tca-agent dsh-open --repo /path/to/your-checkout             # 打开 web 界面
+tca-agent doctor --repo /path/to/your-checkout --client dsh  # 检查 web profile
+# 无界面场景可加 --profile headless；doctor 对应加 --dsh-profile headless。
 ```
 
-平时用 dsh web 界面的，可将 `headless` 换成 `web`。这些文件含本机绝对路径，已被 Git 忽略；每台电脑需各自运行 `join` 生成。本机单电脑模式可用 `tca-agent init --client CLIENT --repo PATH --agent-id agent-a1`，M 仍使用 Codex。`doctor` 对 Pi/OpenCode 检查本机 MCP 连接，对 dsh 检查 patch 组合；它不运行模型对话。
+这些文件含本机绝对路径，已被 Git 忽略；每台电脑需各自运行 `join` 生成。本机单电脑模式可用 `tca-agent init --client CLIENT --repo PATH --agent-id agent-a1`，M 也可选择任一受支持客户端。`doctor` 对 Pi/OpenCode 检查本机 MCP 连接，对 dsh 检查 patch 组合；它不运行模型对话。M 不安装 A 的轮次结束 hook。常驻 M 目前用 macOS launchd；其他系统可在常驻终端或系统服务中运行 `tca-agent manager run --repo PATH`。所选客户端的模型登录或凭据须对 M 进程可用。旧版 `tca_bridge.py`/`TCA_API_TOKEN` 指令已过时；请使用 `tca-agent login`、`TCA_TOKEN` 和自动生成的 MCP 配置。
 
 已接入旧版本的 A 工作树，更新 CLI 和线上 C 后重新运行 `tca-codex join --repo PATH --server-url https://YOUR_TCA_HOST/mcp --replace-local-config`，再审核新 hook。
 
