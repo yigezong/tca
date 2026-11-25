@@ -102,7 +102,7 @@ tca-agent join --repo /path/to/your-checkout --server-url https://YOUR_TCA_HOST/
 tca-agent doctor --repo /path/to/your-checkout --client pi
 ```
 
-The adapter writes only project-local configuration and a turn-end trigger; it never writes a credential into the repo. Pi first asks you to trust the project, then loads `.pi/mcp.json` and `.pi/extensions/tca.ts`. OpenCode loads `.opencode/opencode.json` and a version-matched plugin (`.opencode/plugin/tca.ts` on V1, `.opencode/plugins/tca/index.ts` on V2). For dsh, run the TCA launcher after `join`. It installs the profile's missing TCA MCP plugin and, for an A, the Stop hook plugin, then starts dsh with the generated patch:
+The adapter writes only project-local configuration and a turn-end trigger; it never writes a credential into the repo. Pi first asks you to trust the project, then loads `.pi/mcp.json` and `.pi/extensions/tca.ts`. OpenCode loads `.opencode/opencode.json` and a version-matched plugin (`.opencode/plugin/tca.ts` on V1, `.opencode/plugins/tca/index.ts` on V2). For dsh, run the TCA launcher after `join`. If you installed DSH Desktop, use its **Manage dsh Command… → Install** menu first so `dsh` is on PATH. `dsh-open` starts the dsh **web profile** in a browser; it does not inject configuration into an already running Desktop window. It installs the profile's missing TCA MCP plugin and, for an A, the Stop hook plugin, then starts dsh with the generated patch:
 
 ```bash
 tca-agent dsh-open --repo /path/to/your-checkout             # web UI

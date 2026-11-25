@@ -101,7 +101,7 @@ tca-agent join --repo /path/to/your-checkout --server-url https://YOUR_TCA_HOST/
 tca-agent doctor --repo /path/to/your-checkout --client pi
 ```
 
-适配器只写本机项目配置和轮次结束触发器，不把凭据写进仓库。Pi 首次运行时需先信任项目，才会加载 `.pi/mcp.json` 与 `.pi/extensions/tca.ts`。OpenCode 读取 `.opencode/opencode.json` 和按版本生成的插件（V1 为 `.opencode/plugin/tca.ts`，V2 为 `.opencode/plugins/tca/index.ts`）。dsh 在 `join` 后使用 TCA 启动命令。它会为所选 profile 自动补装缺少的 TCA MCP 插件；A 还会安装轮次结束 hook 插件，然后带上本地 patch 启动 dsh：
+适配器只写本机项目配置和轮次结束触发器，不把凭据写进仓库。Pi 首次运行时需先信任项目，才会加载 `.pi/mcp.json` 与 `.pi/extensions/tca.ts`。OpenCode 读取 `.opencode/opencode.json` 和按版本生成的插件（V1 为 `.opencode/plugin/tca.ts`，V2 为 `.opencode/plugins/tca/index.ts`）。dsh 在 `join` 后使用 TCA 启动命令。如果只安装了 DSH Desktop，先从应用菜单选择 **Manage dsh Command… → Install**，让终端能找到 `dsh`。`dsh-open` 启动的是浏览器里的 dsh **web profile**，不会把 TCA 配置注入已打开的 Desktop 窗口。它会为所选 profile 自动补装缺少的 TCA MCP 插件；A 还会安装轮次结束 hook 插件，然后带上本地 patch 启动 dsh：
 
 ```bash
 tca-agent dsh-open --repo /path/to/your-checkout             # 打开 web 界面
