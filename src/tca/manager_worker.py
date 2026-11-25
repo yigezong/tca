@@ -154,8 +154,21 @@ def analyze(repo: Path, task: dict, client_bin: str, timeout: int = 240,
             cwd = Path(temp)
             stdin = None
         elif client == "dsh":
-            command = [client_bin, "--profile", "headless", "--permission-mode",
-                       "read-only", "--approval-policy", "never", "-"]
+            # Headless disables GUI credentials by default. Enable the existing
+            # local credential store without copying any secret into TCA files.
+            credential_patch = Path(temp) / "dsh-credentials.patch.yml"
+            credential_patch.write_text(
+                "- id: credentials\n  disabled: false\n"
+                "- id: authorization\n  disabled: false\n"
+                "- id: deepseek-account\n  disabled: false\n", encoding="utf-8")
+            help_result = subprocess.run([client_bin, "--profile", "headless", "--help"],
+                                         text=True, capture_output=True, timeout=10, check=False)
+            if help_result.returncode:
+                raise RuntimeError("dsh headless is unavailable")
+            command = [client_bin, "--profile", "headless", "--patch", str(credential_patch)]
+            if "--permission-mode" in help_result.stdout:
+                command += ["--permission-mode", "read-only", "--approval-policy", "never"]
+            command.append("-")
             cwd = Path(temp)
             stdin = prompt
         else:
@@ -163,9 +176,15 @@ def analyze(repo: Path, task: dict, client_bin: str, timeout: int = 240,
         env = os.environ.copy()
         for secret in ("TCA_TOKEN", "TCA_API_TOKEN", "TCA_GITHUB_TOKEN"):
             env.pop(secret, None)
+        if client == "dsh":
+            # Older dsh headless releases use this environment setting instead
+            # of the newer --permission-mode flag.
+            env["DSH_PERMISSION_MODE"] = "read-only"
         result = subprocess.run(command, cwd=cwd, input=stdin, text=True,
                                 capture_output=True, timeout=timeout, check=False, env=env)
         if result.returncode:
+            if client == "dsh" and "MISSING_CREDENTIAL" in result.stderr:
+                raise RuntimeError("dsh M has no headless model credential; configure a model API key in the dsh web profile or $DSH_HOME/.env")
             raise RuntimeError(f"{client} M failed (exit {result.returncode})")
         if client == "codex":
             if not output.exists():

@@ -5,7 +5,7 @@ import pytest
 from tca.codex_setup import SetupError, _session_path
 from tca.controller import Controller
 from tca.domain import Claim
-from tca.manager_worker import process_one, project, session_token
+from tca.manager_worker import analyze, process_one, project, session_token
 from tca.rules import BasicRuleChecker
 from tca.store import ClaimStore
 
@@ -94,7 +94,11 @@ elif Path(sys.argv[0]).name == 'opencode':
     assert args[:4] == ['run', '--pure', '--agent', 'plan']
     prompt = args[-1]
 else:
-    assert '--permission-mode' in args and 'read-only' in args
+    if '--help' in args:
+        print('--permission-mode --approval-policy')
+        raise SystemExit(0)
+    assert '--permission-mode' in args and 'read-only' in args and '--patch' in args
+    assert os.environ.get('DSH_PERMISSION_MODE') == 'read-only'
     prompt = sys.stdin.read()
 assert 'add inventory' in prompt
 assert 'TCA_TOKEN' not in os.environ
@@ -152,3 +156,25 @@ def test_launchd_uses_selected_m_client_without_embedding_token(tmp_path: Path, 
     arguments = plistlib.loads(content)["ProgramArguments"]
     assert arguments[-4:] == ["--client", "pi", "--client-bin", "/usr/local/bin/pi"]
     assert b"tca_secret-do-not-save" not in content
+
+
+def test_dsh_older_headless_cli_uses_read_only_environment(tmp_path: Path) -> None:
+    fake = tmp_path / "dsh"
+    fake.write_text("""#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+if '--help' in sys.argv:
+    print('Usage: dsh --profile headless [task...]')
+    raise SystemExit(0)
+assert '--permission-mode' not in sys.argv
+assert '--patch' in sys.argv
+assert 'disabled: false' in Path(sys.argv[sys.argv.index('--patch')+1]).read_text()
+assert os.environ['DSH_PERMISSION_MODE'] == 'read-only'
+assert 'smoke' in sys.stdin.read()
+print(json.dumps({'advice':'Own reserve.', 'state':'approved', 'reason':'Separate scope',
+ 'constraints':[], 'wait_for':[], 'conflicts_with':[], 'boundary_contract':''}))
+""")
+    fake.chmod(0o700)
+    answer = analyze(tmp_path, {"claim": {"claim": {"claim_id": "smoke"}}},
+                     str(fake), client="dsh")
+    assert answer["state"] == "approved"

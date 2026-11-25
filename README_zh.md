@@ -109,7 +109,7 @@ tca-agent doctor --repo /path/to/your-checkout --client dsh  # 检查 web profil
 # 无界面场景可加 --profile headless；doctor 对应加 --dsh-profile headless。
 ```
 
-这些文件含本机绝对路径，已被 Git 忽略；每台电脑需各自运行 `join` 生成。本机单电脑模式可用 `tca-agent init --client CLIENT --repo PATH --agent-id agent-a1`，M 也可选择任一受支持客户端。`doctor` 对 Pi/OpenCode 检查本机 MCP 连接，对 dsh 检查 patch 组合；它不运行模型对话。M 不安装 A 的轮次结束 hook。常驻 M 目前用 macOS launchd；其他系统可在常驻终端或系统服务中运行 `tca-agent manager run --repo PATH`。所选客户端的模型登录或凭据须对 M 进程可用。旧版 `tca_bridge.py`/`TCA_API_TOKEN` 指令已过时；请使用 `tca-agent login`、`TCA_TOKEN` 和自动生成的 MCP 配置。
+这些文件含本机绝对路径，已被 Git 忽略；每台电脑需各自运行 `join` 生成。本机单电脑模式可用 `tca-agent init --client CLIENT --repo PATH --agent-id agent-a1`，M 也可选择任一受支持客户端。`doctor` 对 Pi/OpenCode 检查本机 MCP 连接，对 dsh 检查 patch 组合；它不运行模型对话。M 不安装 A 的轮次结束 hook。 dsh M 的 headless 工作进程兼容新旧 CLI 参数，并尝试读取本机 dsh 凭据；仅登录 Desktop 账号不一定有 headless 默认模型所需的 API key。请先在 dsh web profile 配置模型 API key，或在 `$DSH_HOME/.env` 中配置，然后用 `dsh --profile headless` 做一次小测试。常驻 M 目前用 macOS launchd；其他系统可在常驻终端或系统服务中运行 `tca-agent manager run --repo PATH`。所选客户端的模型登录或凭据须对 M 进程可用。旧版 `tca_bridge.py`/`TCA_API_TOKEN` 指令已过时；请使用 `tca-agent login`、`TCA_TOKEN` 和自动生成的 MCP 配置。
 
 已接入旧版本的 A 工作树，更新 CLI 和线上 C 后重新运行 `tca-codex join --repo PATH --server-url https://YOUR_TCA_HOST/mcp --replace-local-config`，再审核新 hook。
 
