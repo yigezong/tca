@@ -87,8 +87,17 @@ class Claim:
         version = int(value.get("version", 1))
         if version < 1:
             raise ValueError("claim version must be positive")
+
+        def strings(name: str) -> tuple[str, ...]:
+            items = value.get(name, ())
+            if not isinstance(items, (list, tuple)) or any(
+                not isinstance(item, str) for item in items
+            ):
+                raise ValueError(f"{name} must be an array of strings")
+            return tuple(items)
+
         dependency_mode = DependencyMode(value.get("dependency_mode", "parallel"))
-        handoff_from = tuple(str(item) for item in value.get("handoff_from", ()))
+        handoff_from = strings("handoff_from")
         if dependency_mode is DependencyMode.AFTER_INTERFACE and not handoff_from:
             raise ValueError("after_interface claims must declare handoff_from")
         if dependency_mode is DependencyMode.PARALLEL and handoff_from:
@@ -106,19 +115,15 @@ class Claim:
             base_commit=str(value["base_commit"]),
             work_branch=str(value["work_branch"]),
             goal=str(value["goal"]),
-            planned_paths=tuple(str(path) for path in value["planned_paths"]),
-            excluded_paths=tuple(str(path) for path in value.get("excluded_paths", ())),
-            dependencies=tuple(str(item) for item in value.get("dependencies", ())),
-            owned_symbols=tuple(str(item) for item in value.get("owned_symbols", ())),
-            behavior_contracts=tuple(
-                str(item) for item in value.get("behavior_contracts", ())
-            ),
-            temporary_checks=tuple(str(item) for item in value.get("temporary_checks", ())),
+            planned_paths=strings("planned_paths"),
+            excluded_paths=strings("excluded_paths"),
+            dependencies=strings("dependencies"),
+            owned_symbols=strings("owned_symbols"),
+            behavior_contracts=strings("behavior_contracts"),
+            temporary_checks=strings("temporary_checks"),
             dependency_mode=dependency_mode,
             handoff_from=handoff_from,
-            takes_over_symbols=tuple(
-                str(item) for item in value.get("takes_over_symbols", ())
-            ),
+            takes_over_symbols=strings("takes_over_symbols"),
             coordination_group=coordination_group,
             expected_group_size=expected_group_size,
             version=version,

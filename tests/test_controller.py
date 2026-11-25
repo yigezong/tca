@@ -330,6 +330,31 @@ def test_interface_handoff_releases_successor_before_owner_completes() -> None:
     assert "a1-interface-commit" in released.decision.constraints[0]
 
 
+def test_interface_handoff_releases_m_waiter_regardless_of_reason_wording() -> None:
+    controller = make_controller()
+    controller.submit_claim(make_claim(
+        "a1", ("src/shared.py",), owned_symbols=("reserve",),
+        coordination_group="checkout", expected_group_size=2))
+    approve_claim(controller, "a1")
+    controller.start_execution("team/project", "a1")
+    second = controller.submit_claim(make_claim(
+        "a2", ("src/shared.py", "src/checkout.py"),
+        dependency_mode=DependencyMode.AFTER_INTERFACE, handoff_from=("a1",),
+        coordination_group="checkout", expected_group_size=2))
+    assert second.state is ClaimState.ASSESSING
+    controller.submit_coordination_decision(
+        "team/project", "a2", Decision(
+            ClaimState.WAITING, "Hold checkout until the stable reserve API is published",
+            wait_for=("a1",)))
+    controller.publish_handoff("team/project", "a1", Handoff(
+        claim_id="a1", commit="a1-interface-commit", exported_symbols=("reserve",),
+        behavior_contracts=("reserve accepts an idempotency key",)))
+    released = controller.store.get("team/project", "a2")
+    assert released.state is ClaimState.APPROVED_WITH_CONSTRAINTS
+    assert "a1-interface-commit" in released.decision.constraints[0]
+    assert controller.store.get("team/project", "a1").state is ClaimState.EXECUTING
+
+
 def test_interface_handoff_rejects_unapproved_ownership_transfer() -> None:
     controller = make_controller()
     first = controller.submit_claim(
@@ -495,6 +520,15 @@ def test_claim_rejects_non_scoped_work_branch() -> None:
 
     with pytest.raises(ValueError, match="work_branch must be"):
         controller.submit_claim(Claim.from_mapping(value))
+
+
+@pytest.mark.parametrize("field", ["planned_paths", "dependencies", "handoff_from",
+                                    "owned_symbols", "behavior_contracts"])
+def test_claim_rejects_string_in_place_of_array(field: str) -> None:
+    value = make_claim("claim-1", ("src/login/**",)).to_mapping()
+    value[field] = "inventory-reserve"
+    with pytest.raises(ValueError, match=f"{field} must be an array of strings"):
+        Claim.from_mapping(value)
 
 
 def test_claim_revision_cannot_change_its_baseline() -> None:

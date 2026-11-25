@@ -611,20 +611,35 @@ def dsh_open(args: argparse.Namespace) -> None:
     binary = shutil.which("dsh")
     if not binary:
         raise SetupError("dsh CLI is not on PATH")
+    version_result = subprocess.run(
+        [binary, "--version"], text=True, capture_output=True,
+        check=False, timeout=10,
+    )
+    version = version_result.stdout.strip()
+    if version_result.returncode or not re.fullmatch(
+        r"\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?", version
+    ):
+        raise SetupError("could not determine dsh version for compatible TCA plugins")
     identity_path = repo / ".tca" / "agent-id"
     if not identity_path.is_file():
         raise SetupError("missing local agent identity; run 'tca-agent join --client dsh' first")
     identity = identity_path.read_text(encoding="utf-8").strip()
     packages = ["@deepseek-ai/dsh-mcp-client"]
     if identity != "agent-m":
-        packages.append("@deepseek-ai/dsh-hooks-claude-code")
+        packages.extend([
+            "@deepseek-ai/dsh-hooks-claude-code",
+            "@deepseek-ai/dsh-hook-protocol",
+        ])
     profile_dir = Path(os.getenv("DSH_HOME", str(Path.home() / ".dsh"))) / "profiles" / args.profile
     package_file = profile_dir / "package.json"
     try:
         installed = json.loads(package_file.read_text()).get("dependencies", {}) if package_file.exists() else {}
     except (ValueError, OSError):
         installed = {}
-    missing = [package for package in packages if package not in installed]
+    missing = [
+        f"{package}@{version}" for package in packages
+        if installed.get(package) != version
+    ]
     if missing:
         result = subprocess.run([binary, "plugin", "--profile", args.profile, "add", "-w", *missing],
                                 text=True, capture_output=True, check=False, timeout=300)

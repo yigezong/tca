@@ -954,9 +954,8 @@ class Controller:
         for record in self.store.list_active(trigger.claim.project_id):
             if (
                 record.state is not ClaimState.WAITING
-                or record.decision is None
-                or record.decision.reason != "waiting for interface handoff"
-                or trigger.claim.claim_id not in record.decision.wait_for
+                or record.claim.dependency_mode is not DependencyMode.AFTER_INTERFACE
+                or trigger.claim.claim_id not in record.claim.handoff_from
             ):
                 continue
             self.store.transition(

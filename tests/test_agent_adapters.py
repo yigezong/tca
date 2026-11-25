@@ -59,12 +59,18 @@ def test_remote_configs_reference_token_env_not_secret(tmp_path):
         assert "tca_secret-session" not in encoded
 
 
-def test_dsh_open_installs_role_plugins_and_launches_patch(tmp_path, monkeypatch):
+@pytest.mark.parametrize("identity,extra", [
+    ("agent-m", []),
+    ("agent-a2", ["@deepseek-ai/dsh-hooks-claude-code@0.2.1-rc.2",
+                  "@deepseek-ai/dsh-hook-protocol@0.2.1-rc.2"]),
+])
+def test_dsh_open_installs_role_plugins_and_launches_patch(tmp_path, monkeypatch,
+                                                              identity, extra):
     repo = tmp_path / "project"
     repo.mkdir()
     _git(repo, "init", "-b", "main")
     (repo / ".tca").mkdir()
-    (repo / ".tca/agent-id").write_text("agent-m\n")
+    (repo / ".tca/agent-id").write_text(identity + "\n")
     patch = repo / ".tca/dsh.patch.yml"
     patch.write_text("[]\n")
     monkeypatch.setenv("DSH_HOME", str(tmp_path / "dsh-home"))
@@ -72,13 +78,15 @@ def test_dsh_open_installs_role_plugins_and_launches_patch(tmp_path, monkeypatch
     monkeypatch.setattr("tca.codex_setup.shutil.which", lambda _: "/bin/dsh")
     calls = []
     monkeypatch.setattr("tca.codex_setup.subprocess.run", lambda argv, **kwargs:
-                        (calls.append(argv) or type("Result", (), {"returncode": 0})()))
+                        (calls.append(argv) or type("Result", (), {"returncode": 0,
+                                                                  "stdout": "0.2.1-rc.2\n"})()))
     monkeypatch.setattr("tca.codex_setup.os.execv", lambda binary, argv:
                         calls.append([binary, *argv]))
     dsh_open(argparse.Namespace(repo=repo, profile="web", client_args=[]))
-    assert calls[0] == ["/bin/dsh", "plugin", "--profile", "web", "add", "-w",
-                        "@deepseek-ai/dsh-mcp-client"]
-    assert calls[1][-4:] == ["--profile", "web", "--patch", str(patch)]
+    assert calls[0] == ["/bin/dsh", "--version"]
+    assert calls[1] == ["/bin/dsh", "plugin", "--profile", "web", "add", "-w",
+                        "@deepseek-ai/dsh-mcp-client@0.2.1-rc.2", *extra]
+    assert calls[2][-4:] == ["--profile", "web", "--patch", str(patch)]
 
 
 def test_opencode_v1_uses_compatible_plugin(tmp_path, monkeypatch):
